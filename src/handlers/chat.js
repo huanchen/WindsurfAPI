@@ -333,6 +333,26 @@ export async function handleChatCompletions(body) {
   // handles identity neutrally; response-side neutralizeCascadeIdentity
   // still rewrites stray "I am Cascade" leaks without touching inputs.
 
+  // Deprecated models were dropped from Windsurf upstream; their Cascade
+  // request returns a cryptic "neither PlanModel nor RequestedModel
+  // specified" 502 that callers mis-diagnose as a transient failure and
+  // retry forever. Surface it as a clean 410 + model_deprecated so the
+  // caller knows to switch models. Baseline probe (scripts/probes/
+  // tool-emission-probe.mjs) hit this on gpt-4o-mini ×3 variants × 5
+  // samples = 15/15 upstream_error; 9 models are currently flagged
+  // deprecated in src/models.js.
+  if (modelInfo?.deprecated) {
+    return {
+      status: 410,
+      body: {
+        error: {
+          message: `模型 ${displayModel} 已被 Windsurf 上游废弃，不再可用。建议切换到当前可用模型（如 gemini-2.5-flash、claude-haiku-4-5、claude-sonnet-4-6）。`,
+          type: 'model_deprecated',
+        },
+      },
+    };
+  }
+
   // Global model access control (allowlist / blocklist from dashboard)
   const access = isModelAllowed(modelKey);
   if (!access.allowed) {

@@ -71,3 +71,24 @@ describe('MODEL_TIER_ACCESS', () => {
     assert.deepEqual(MODEL_TIER_ACCESS.expired, []);
   });
 });
+
+describe('deprecated model markers', () => {
+  // Models the Windsurf upstream removed from Cascade. Requests for them
+  // come back as "neither PlanModel nor RequestedModel specified" — we
+  // catch that in handlers/chat.js with a 410 model_deprecated response.
+  // If any of these loses its deprecated flag without the actual upstream
+  // coming back, users will get the cryptic 502 again and reopen #8.
+  const KNOWN_DEPRECATED = [
+    'gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-5-mini',
+    'deepseek-v3', 'deepseek-v3-2', 'deepseek-r1',
+    'grok-3-mini', 'qwen-3',
+  ];
+
+  for (const key of KNOWN_DEPRECATED) {
+    it(`${key} is flagged deprecated`, () => {
+      const info = getModelInfo(key);
+      assert.ok(info, `${key} missing from MODELS`);
+      assert.equal(info.deprecated, true, `${key} lost its deprecated flag`);
+    });
+  }
+});
