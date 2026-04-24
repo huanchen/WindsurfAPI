@@ -31,21 +31,21 @@ const _repoRoot = (() => {
   } catch { return '/root/WindsurfAPI'; }
 })();
 
+// Placeholder shape: an HTML-ish tag (`<redacted-path>`) is intentionally
+// chosen because no shell/file API will try to resolve it as a real path,
+// and downstream LLMs (when the response is fed back as assistant history in
+// later turns) don't treat angle-bracketed tokens as filenames. Earlier
+// attempts used "./tail" (LLM followed the path and Reads looped on ENOENT)
+// and "[internal]" (LLM treated it as a bracketed directory name and tried
+// `ls [internal]`, looping the same way) — both were confused with actual
+// paths. Angle brackets break that confusion at the tokenization level.
+const REDACTED_PATH = '<redacted-path>';
+
 const PATTERNS = [
-  // Cascade's sandbox workspace paths. Previously we rewrote to "./tail" so
-  // a leaked `/tmp/windsurf-workspace/src/main.py` would become `./src/main.py`
-  // and fall back to the user's actual cwd. Turned out to be an antifeature:
-  // Cascade frequently hallucinates these paths (narrates "I viewed
-  // /tmp/windsurf-workspace/config.yaml" purely from its training prior, not
-  // from any real read), and after the rewrite Claude Code would try to Read
-  // `./config.yaml`, get a not-found error, retry, and loop — issue #24
-  // "Cascade cites files that don't exist, keeps looping." Flatten the whole
-  // path to a neutral [internal] marker so a leaked reference can't be
-  // mistaken for a real local file.
-  [/\/tmp\/windsurf-workspace(?:\/[^\s"'`<>)}\],*;]*)?/g, '[internal]'],
-  [/\/home\/user\/projects\/workspace-[a-z0-9]+(?:\/[^\s"'`<>)}\],*;]*)?/g, '[internal]'],
-  [/\/opt\/windsurf(?:\/[^\s"'`<>)}\],*;]*)?/g, '[internal]'],
-  [new RegExp(_repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\/[^\\s"\'`<>)}\\],*;]*)?', 'g'), '[internal]'],
+  [/\/tmp\/windsurf-workspace(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  [/\/home\/user\/projects\/workspace-[a-z0-9]+(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  [/\/opt\/windsurf(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  [new RegExp(_repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\/[^\\s"\'`<>)}\\],*;]*)?', 'g'), REDACTED_PATH],
 ];
 
 // Bare literals (no path tail) used by the streaming cut-point finder.
