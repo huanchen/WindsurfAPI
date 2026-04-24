@@ -2,24 +2,29 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeText, PathSanitizeStream, sanitizeToolCall } from '../src/sanitize.js';
 
+// Leaked Windsurf paths are redacted to the angle-bracketed marker
+// `<redacted-path>`. Shell / file APIs won't try to resolve that string,
+// and downstream LLMs don't tokenize it as a path (see sanitize.js header
+// for the history — ./tail and [internal] both caused read-loop regressions).
+
 describe('sanitizeText', () => {
-  it('rewrites /tmp/windsurf-workspace paths to relative', () => {
-    assert.equal(sanitizeText('/tmp/windsurf-workspace/src/index.js'), './src/index.js');
+  it('redacts /tmp/windsurf-workspace paths', () => {
+    assert.equal(sanitizeText('/tmp/windsurf-workspace/src/index.js'), '<redacted-path>');
   });
 
-  it('rewrites bare /tmp/windsurf-workspace to .', () => {
-    assert.equal(sanitizeText('/tmp/windsurf-workspace'), '.');
+  it('redacts bare /tmp/windsurf-workspace', () => {
+    assert.equal(sanitizeText('/tmp/windsurf-workspace'), '<redacted-path>');
   });
 
-  it('rewrites per-account workspace paths', () => {
+  it('redacts per-account workspace paths', () => {
     assert.equal(
       sanitizeText('/home/user/projects/workspace-abc12345/package.json'),
-      './package.json'
+      '<redacted-path>'
     );
   });
 
-  it('rewrites /opt/windsurf to [internal]', () => {
-    assert.equal(sanitizeText('/opt/windsurf/language_server'), '[internal]');
+  it('redacts /opt/windsurf', () => {
+    assert.equal(sanitizeText('/opt/windsurf/language_server'), '<redacted-path>');
   });
 
   it('leaves normal text unchanged', () => {
@@ -30,7 +35,7 @@ describe('sanitizeText', () => {
   it('handles multiple patterns in one string', () => {
     const input = 'Editing /tmp/windsurf-workspace/a.js and /opt/windsurf/bin';
     const result = sanitizeText(input);
-    assert.equal(result, 'Editing ./a.js and [internal]');
+    assert.equal(result, 'Editing <redacted-path> and <redacted-path>');
   });
 
   it('returns non-strings unchanged', () => {
@@ -45,7 +50,7 @@ describe('PathSanitizeStream', () => {
     const stream = new PathSanitizeStream();
     const out = stream.feed('/tmp/windsurf-workspace/file.js is here');
     const rest = stream.flush();
-    assert.equal(out + rest, './file.js is here');
+    assert.equal(out + rest, '<redacted-path> is here');
   });
 
   it('handles path split across chunks', () => {
@@ -54,7 +59,7 @@ describe('PathSanitizeStream', () => {
     result += stream.feed('Look at /tmp/windsurf');
     result += stream.feed('-workspace/config.yaml for details');
     result += stream.flush();
-    assert.equal(result, 'Look at ./config.yaml for details');
+    assert.equal(result, 'Look at <redacted-path> for details');
   });
 
   it('handles partial prefix at buffer end', () => {
@@ -63,7 +68,7 @@ describe('PathSanitizeStream', () => {
     result += stream.feed('path is /tmp/win');
     result += stream.feed('dsurf-workspace/x.js done');
     result += stream.flush();
-    assert.equal(result, 'path is ./x.js done');
+    assert.equal(result, 'path is <redacted-path> done');
   });
 
   it('flushes clean text immediately', () => {
@@ -77,13 +82,13 @@ describe('sanitizeToolCall', () => {
   it('sanitizes argumentsJson paths', () => {
     const tc = { name: 'Read', argumentsJson: '{"path":"/tmp/windsurf-workspace/f.js"}' };
     const result = sanitizeToolCall(tc);
-    assert.equal(result.argumentsJson, '{"path":"./f.js"}');
+    assert.equal(result.argumentsJson, '{"path":"<redacted-path>"}');
   });
 
   it('sanitizes input object string values', () => {
     const tc = { name: 'Read', input: { file_path: '/home/user/projects/workspace-abc12345/src/x.ts' } };
     const result = sanitizeToolCall(tc);
-    assert.equal(result.input.file_path, './src/x.ts');
+    assert.equal(result.input.file_path, '<redacted-path>');
   });
 
   it('returns null/undefined unchanged', () => {

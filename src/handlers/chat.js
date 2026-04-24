@@ -86,6 +86,15 @@ const CASCADE_REUSE_STRICT_RETRY_MS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 60_000;
 })();
 
+// Only non-tool Cascade turns are eligible for cascade_id reuse. Tool-
+// emulated requests (Claude Code / Cline / Cursor with OpenAI tools[])
+// carry <tool_call>/<tool_result> bodies that change every turn, so the
+// fingerprint almost never matches anyway — bypassing the pool avoids
+// wasted checkout/checkin round-trips and keeps the pool clean. (PR #50)
+export function shouldUseCascadeReuse({ useCascade, emulateTools }) {
+  return !!useCascade && !emulateTools;
+}
+
 function strictReuseRetryMs(availability) {
   return Math.max(1000, availability?.retryAfterMs || CASCADE_REUSE_STRICT_RETRY_MS);
 }
@@ -382,7 +391,7 @@ export async function handleChatCompletions(body) {
   // instead of replaying the whole history.
   //
   // Conversation reuse lets Cascade keep server-side context across turns.
-  const reuseEnabled = useCascade && isExperimentalEnabled('cascadeConversationReuse');
+  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools }) && isExperimentalEnabled('cascadeConversationReuse');
   const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
   let checkedOutReuseEntry = reuseEntry;
@@ -793,7 +802,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       // Cascade conversation pool (experimental, stream path) — bypassed in
       // tool-emulation mode because the fingerprint can't collapse turns
       // whose bodies carry <tool_call>/<tool_result> markup.
-      const reuseEnabled = useCascade && isExperimentalEnabled('cascadeConversationReuse');
+      const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools }) && isExperimentalEnabled('cascadeConversationReuse');
       const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey) : null;
       let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
       let checkedOutReuseEntry = reuseEntry;
