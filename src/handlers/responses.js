@@ -207,11 +207,13 @@ class ResponsesStreamTranslator {
     this.outputItems = [];
     this.toolCalls = new Map();
     this.finalUsage = {};
+    this.sequenceNumber = 0;
   }
 
   send(event, data) {
     if (!this.res.writableEnded) {
-      this.res.write(`event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`);
+      const payload = { type: event, sequence_number: this.sequenceNumber++, ...data };
+      this.res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     }
   }
 
@@ -229,7 +231,8 @@ class ResponsesStreamTranslator {
   start() {
     if (this.createdSent) return;
     this.createdSent = true;
-    this.send('response.created', this.responseBase('in_progress'));
+    this.send('response.created', { response: this.responseBase('in_progress') });
+    this.send('response.in_progress', { response: this.responseBase('in_progress') });
   }
 
   processChunk(chunk) {
@@ -392,8 +395,10 @@ class ResponsesStreamTranslator {
     this.finishToolCalls();
     this.finishMessage();
     this.send('response.completed', {
-      ...this.responseBase('completed', this.outputItems.filter(Boolean)),
-      usage: mapUsage(this.finalUsage),
+      response: {
+        ...this.responseBase('completed', this.outputItems.filter(Boolean)),
+        usage: mapUsage(this.finalUsage),
+      },
     });
   }
 
@@ -402,11 +407,13 @@ class ResponsesStreamTranslator {
     this.finished = true;
     this.start();
     this.send('response.failed', {
-      ...this.responseBase('failed', this.outputItems.filter(Boolean)),
-      error: {
-        message: err?.message || 'Upstream stream error',
-        type: err?.type || 'upstream_error',
-        code: err?.code || null,
+      response: {
+        ...this.responseBase('failed', this.outputItems.filter(Boolean)),
+        error: {
+          message: err?.message || 'Upstream stream error',
+          type: err?.type || 'upstream_error',
+          code: err?.code || null,
+        },
       },
     });
   }

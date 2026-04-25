@@ -20,6 +20,12 @@ function parseEvents(raw) {
     });
 }
 
+function assertSequenceNumbers(events) {
+  events.forEach((event, index) => {
+    assert.equal(event.data.sequence_number, index);
+  });
+}
+
 function fakeRes() {
   const listeners = new Map();
   return {
@@ -178,6 +184,7 @@ describe('handleResponses streaming', () => {
     const events = parseEvents(res.body);
     assert.deepEqual(events.map(e => e.event), [
       'response.created',
+      'response.in_progress',
       'response.output_item.added',
       'response.content_part.added',
       'response.output_text.delta',
@@ -187,11 +194,14 @@ describe('handleResponses streaming', () => {
       'response.output_item.done',
       'response.completed',
     ]);
-    assert.equal(events[3].data.delta, 'Hel');
-    assert.equal(events[4].data.delta, 'lo');
-    assert.equal(events[5].data.text, 'Hello');
-    assert.equal(events.at(-1).data.status, 'completed');
-    assert.deepEqual(events.at(-1).data.usage, { input_tokens: 3, output_tokens: 2, total_tokens: 5 });
+    assertSequenceNumbers(events);
+    assert.equal(events[0].data.response.status, 'in_progress');
+    assert.equal(events[1].data.response.status, 'in_progress');
+    assert.equal(events[4].data.delta, 'Hel');
+    assert.equal(events[5].data.delta, 'lo');
+    assert.equal(events[6].data.text, 'Hello');
+    assert.equal(events.at(-1).data.response.status, 'completed');
+    assert.deepEqual(events.at(-1).data.response.usage, { input_tokens: 3, output_tokens: 2, total_tokens: 5 });
   });
 
   it('emits function_call events before the message and still completes on tool_calls finish', async () => {
@@ -215,6 +225,7 @@ describe('handleResponses streaming', () => {
     const events = parseEvents(res.body);
     assert.deepEqual(events.map(e => e.event), [
       'response.created',
+      'response.in_progress',
       'response.output_item.added',
       'response.function_call_arguments.delta',
       'response.function_call_arguments.delta',
@@ -227,11 +238,12 @@ describe('handleResponses streaming', () => {
       'response.output_item.done',
       'response.completed',
     ]);
-    assert.equal(events[1].data.item.type, 'function_call');
-    assert.equal(events[4].data.arguments, '{"command":"pwd"}');
-    assert.equal(events[5].data.item.call_id, 'call_1');
-    assert.equal(events.at(-1).data.status, 'completed');
-    assert.equal(events.at(-1).data.output[0].type, 'function_call');
+    assertSequenceNumbers(events);
+    assert.equal(events[2].data.item.type, 'function_call');
+    assert.equal(events[5].data.arguments, '{"command":"pwd"}');
+    assert.equal(events[6].data.item.call_id, 'call_1');
+    assert.equal(events.at(-1).data.response.status, 'completed');
+    assert.equal(events.at(-1).data.response.output[0].type, 'function_call');
   });
 
   it('emits error event and closes when the upstream stream throws', async () => {
@@ -249,8 +261,9 @@ describe('handleResponses streaming', () => {
     const res = fakeRes();
     await result.handler(res);
     const events = parseEvents(res.body);
-    assert.deepEqual(events.map(e => e.event), ['response.created', 'response.failed']);
-    assert.equal(events[1].data.error.message, 'boom');
+    assert.deepEqual(events.map(e => e.event), ['response.created', 'response.in_progress', 'response.failed']);
+    assertSequenceNumbers(events);
+    assert.equal(events[2].data.response.error.message, 'boom');
     assert.equal(res.writableEnded, true);
   });
 
@@ -271,7 +284,8 @@ describe('handleResponses streaming', () => {
     const res = fakeRes();
     await result.handler(res);
     const events = parseEvents(res.body);
+    assertSequenceNumbers(events);
     assert.ok(events.some(e => e.event === 'response.reasoning_summary_text.delta' && e.data.delta === 'plan'));
-    assert.equal(events.at(-1).data.output[0].type, 'reasoning');
+    assert.equal(events.at(-1).data.response.output[0].type, 'reasoning');
   });
 });

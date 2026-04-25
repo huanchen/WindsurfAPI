@@ -1,0 +1,255 @@
+[
+  {
+    "event": "response.created",
+    "type": "response.created",
+    "sequence_number": 0,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "response"
+      ],
+      "response": {
+        "id": "resp_45d7e29b79054864911ff447",
+        "status": "in_progress",
+        "output": []
+      }
+    }
+  },
+  {
+    "event": "response.in_progress",
+    "type": "response.in_progress",
+    "sequence_number": 1,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "response"
+      ],
+      "response": {
+        "id": "resp_45d7e29b79054864911ff447",
+        "status": "in_progress",
+        "output": []
+      }
+    }
+  },
+  {
+    "event": "response.output_item.added",
+    "type": "response.output_item.added",
+    "sequence_number": 2,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "output_index",
+        "item"
+      ],
+      "output_index": 0,
+      "item": {
+        "type": "reasoning",
+        "status": "in_progress",
+        "summary_length": 0
+      }
+    }
+  },
+  {
+    "event": "response.reasoning_summary_text.delta",
+    "type": "response.reasoning_summary_text.delta",
+    "sequence_number": 3,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "summary_index",
+        "delta"
+      ],
+      "output_index": 0,
+      "summary_index": 0,
+      "delta": "cached thinking"
+    }
+  },
+  {
+    "event": "response.output_item.added",
+    "type": "response.output_item.added",
+    "sequence_number": 4,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "output_index",
+        "item"
+      ],
+      "output_index": 1,
+      "item": {
+        "type": "message",
+        "status": "in_progress",
+        "content_length": 0
+      }
+    }
+  },
+  {
+    "event": "response.content_part.added",
+    "type": "response.content_part.added",
+    "sequence_number": 5,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "content_index",
+        "part"
+      ],
+      "output_index": 1,
+      "content_index": 0,
+      "part": {
+        "type": "output_text"
+      }
+    }
+  },
+  {
+    "event": "response.output_text.delta",
+    "type": "response.output_text.delta",
+    "sequence_number": 6,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "content_index",
+        "delta"
+      ],
+      "output_index": 1,
+      "content_index": 0,
+      "delta": "cached answer"
+    }
+  },
+  {
+    "event": "response.reasoning_summary_text.done",
+    "type": "response.reasoning_summary_text.done",
+    "sequence_number": 7,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "summary_index",
+        "text"
+      ],
+      "output_index": 0,
+      "summary_index": 0,
+      "text": "cached thinking"
+    }
+  },
+  {
+    "event": "response.output_item.done",
+    "type": "response.output_item.done",
+    "sequence_number": 8,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "output_index",
+        "item"
+      ],
+      "output_index": 0,
+      "item": {
+        "type": "reasoning",
+        "status": "completed",
+        "summary_length": 1
+      }
+    }
+  },
+  {
+    "event": "response.output_text.done",
+    "type": "response.output_text.done",
+    "sequence_number": 9,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "content_index",
+        "text"
+      ],
+      "output_index": 1,
+      "content_index": 0,
+      "text": "cached answer"
+    }
+  },
+  {
+    "event": "response.content_part.done",
+    "type": "response.content_part.done",
+    "sequence_number": 10,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "item_id",
+        "output_index",
+        "content_index",
+        "part"
+      ],
+      "output_index": 1,
+      "content_index": 0,
+      "part": {
+        "type": "output_text"
+      }
+    }
+  },
+  {
+    "event": "response.output_item.done",
+    "type": "response.output_item.done",
+    "sequence_number": 11,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "output_index",
+        "item"
+      ],
+      "output_index": 1,
+      "item": {
+        "type": "message",
+        "status": "completed",
+        "content_length": 1
+      }
+    }
+  },
+  {
+    "event": "response.completed",
+    "type": "response.completed",
+    "sequence_number": 12,
+    "summary": {
+      "keys": [
+        "type",
+        "sequence_number",
+        "response"
+      ],
+      "response": {
+        "id": "resp_45d7e29b79054864911ff447",
+        "status": "completed",
+        "output": [
+          {
+            "type": "reasoning",
+            "status": "completed"
+          },
+          {
+            "type": "message",
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 2,
+          "total_tokens": 3
+        }
+      }
+    }
+  }
+]
