@@ -106,26 +106,32 @@ const CASCADE_REUSE_STRICT_RETRY_MS = (() => {
 const OPUS47_TOOL_EMULATED_REUSE = process.env.OPUS47_TOOL_EMULATED_REUSE !== '0';
 const OPUS47_STRICT_REUSE = process.env.OPUS47_STRICT_REUSE !== '0';
 
-function isOpus47Model(modelKey = '') {
-  return /^claude-opus-4-7(?:-|$)/i.test(String(modelKey || ''));
+function isToolSensitiveOpusModel(modelKey = '') {
+  // Opus-class models share the same prompt-injection / Claude-Code-tools
+  // sensitivity profile, regardless of whether the version label is dotted
+  // (claude-opus-4.6) or dashed (claude-opus-4-7-high). #59 confirmed 4.6
+  // hits the same multi-turn tool-context loss as 4.7, so the strict-reuse
+  // and multimodal-tool-fallback gates apply to both.
+  return /^claude-opus-4(?:[.-]6|[.-]7)(?:[-.]|$)/i.test(String(modelKey || ''));
 }
 
 // Tool-emulated requests are normally kept out of cascade_id reuse because
-// <tool_call>/<tool_result> bodies drift across turns. Opus 4.7 + Claude Code
-// is the exception: replaying the full prompt/tools/image history is worse
-// than preserving the exact upstream cascade, so enable a narrow local path.
+// <tool_call>/<tool_result> bodies drift across turns. Opus 4.6 / 4.7 +
+// Claude Code is the exception: replaying the full prompt/tools/image
+// history is worse than preserving the exact upstream cascade, so enable
+// a narrow local path.
 export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allowToolReuse = OPUS47_TOOL_EMULATED_REUSE }) {
   if (!useCascade) return false;
   if (!emulateTools) return true;
-  return !!allowToolReuse && isOpus47Model(modelKey);
+  return !!allowToolReuse && isToolSensitiveOpusModel(modelKey);
 }
 
 function shouldForceCascadeReuse({ emulateTools, modelKey }) {
-  return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isOpus47Model(modelKey);
+  return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isToolSensitiveOpusModel(modelKey);
 }
 
 export function shouldUseStrictCascadeReuse({ emulateTools, modelKey, strict = CASCADE_REUSE_STRICT, allowOpus47Strict = OPUS47_STRICT_REUSE }) {
-  return !!strict || (!!emulateTools && !!allowOpus47Strict && isOpus47Model(modelKey));
+  return !!strict || (!!emulateTools && !!allowOpus47Strict && isToolSensitiveOpusModel(modelKey));
 }
 
 function hasMultimodalContent(messages) {
@@ -555,9 +561,9 @@ export async function handleChatCompletions(body) {
       log.info(`Chat[${reqId}]: env NOT lifted (extractor returned empty)${probe ? '; nearest env-shaped substring in messages: ' + probe : '; no env-shaped substring found in any message'}`);
     }
   }
-  const disableUserToolFallback = emulateTools && isOpus47Model(modelKey) && hasMultimodalContent(messages);
+  const disableUserToolFallback = emulateTools && isToolSensitiveOpusModel(modelKey) && hasMultimodalContent(messages);
   if (disableUserToolFallback) {
-    log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.7 multimodal turn`);
+    log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.x multimodal turn`);
   }
   let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, tools, { injectUserPreamble: !disableUserToolFallback })
