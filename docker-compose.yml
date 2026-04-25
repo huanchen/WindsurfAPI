@@ -1,6 +1,13 @@
 services:
   windsurf-api:
+    # Pull the prebuilt image by default (released via .github/workflows/release.yml).
+    # `build:` is kept for local dev: `docker compose up --build` rebuilds from source,
+    # and Compose will fall back to building when the image isn't available locally
+    # AND can't be pulled (e.g. before the first stable tag exists, or on a fork).
     image: ghcr.io/dwgx/windsurf-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     # Remove container_name to allow Compose to scale replicas
     restart: unless-stopped
     init: true
