@@ -83,10 +83,20 @@ describe('parseToolCallsFromText', () => {
 
 describe('buildToolPreamble (injection-guard safety)', () => {
   // Regression guard: Claude Code / Opus-class prompt-injection detectors
-  // refuse to honour the injected tool scaffolding if it contains jailbreak-
-  // shaped phrases. Keep the preamble neutral.
-  const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
-  const preamble = buildToolPreamble(tools);
+  // refuse to honour the injected tool scaffolding when:
+  //   (a) it uses jailbreak-shaped phrasing, OR
+  //   (b) it has the SHAPE of a Claude Code system prompt (a wall of
+  //       `### ToolName` blocks with per-tool ```json schemas) appearing
+  //       in a user turn — the model flags that as "someone pasted a
+  //       system prompt into my user slot" and refuses to call tools.
+  // The fallback stays minimal: protocol one-liner + tool name list only.
+  // Full schemas live in the proto-level tool_calling_section override.
+  const manyTools = [
+    { type: 'function', function: { name: 'Bash', description: 'Run a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'Read', description: 'Read a file.', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'Edit', description: 'Edit a file.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, old_string: { type: 'string' }, new_string: { type: 'string' } } } } },
+  ];
+  const preamble = buildToolPreamble(manyTools);
 
   it('does not contain jailbreak-shaped phrasing', () => {
     const banned = [
@@ -102,20 +112,114 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     }
   });
 
-  it('still describes the <tool_call> protocol and lists the function', () => {
-    assert.ok(preamble.includes('<tool_call>'), 'must describe emission format');
-    assert.ok(preamble.includes('read_file'), 'must include function name');
+  it('does not have the shape of a Claude Code system prompt', () => {
+    // No `### ToolName` section headers
+    assert.ok(!/^### /m.test(preamble), `preamble must not use '### ' headers: got ${preamble}`);
+    // No `parameters schema:` / `Parameters:` schema-dump labels
+    assert.ok(!/parameters schema:/i.test(preamble), 'preamble must not dump per-tool schemas');
+    assert.ok(!/^Parameters:/m.test(preamble), 'preamble must not dump per-tool schemas');
+    // No fenced ```json blocks (schemas would live inside these)
+    assert.ok(!/```json/i.test(preamble), 'preamble must not contain fenced json schema blocks');
+    // Stays well under a "system prompt wall of text" size even with many tools
+    assert.ok(preamble.length < 512, `preamble must stay compact (<512 chars); got ${preamble.length}`);
   });
 
-  it('normalizeMessagesForCascade prepends preamble to last user message without jailbreak phrasing', () => {
+  it('still describes the <tool_call> protocol and lists every tool name', () => {
+    assert.ok(preamble.includes('<tool_call>'), 'must describe emission format');
+    for (const t of manyTools) {
+      assert.ok(preamble.includes(t.function.name), `must include function name ${t.function.name}`);
+    }
+  });
+
+  it('normalizeMessagesForCascade prepends preamble to last user message without jailbreak or system-prompt shape', () => {
     const out = normalizeMessagesForCascade(
       [{ role: 'user', content: 'hello' }],
-      tools,
+      manyTools,
     );
     const last = out[out.length - 1];
     assert.equal(last.role, 'user');
     assert.ok(last.content.endsWith('hello'));
     assert.ok(!/IGNORE any earlier/i.test(last.content));
     assert.ok(!/\[Tool-calling context/i.test(last.content));
+    assert.ok(!/^### /m.test(last.content), 'prepended content must not use ### headers');
+    assert.ok(!/```json/i.test(last.content), 'prepended content must not contain ```json fences');
+  });
+
+  it('emits empty string when no usable function tools are present', () => {
+    assert.equal(buildToolPreamble([]), '');
+    assert.equal(buildToolPreamble([{ type: 'other' }]), '');
+    assert.equal(buildToolPreamble([{ type: 'function' }]), '');
+  });
+});
+
+describe('normalizeMessagesForCascade (preamble placement regression)', () => {
+  // Live-confirmed bug against Claude Code v2.1.114 / Opus 4.7: prepending
+  // the "Tools available this turn: …" banner to the LAST user message at
+  // every turn means that on multi-turn conversations the banner lands
+  // immediately before a synthetic <tool_result> block (because tool_result
+  // turns are rewritten into role:'user'). Opus pattern-matches that shape
+  // as a truncated/injected conversation and refuses to keep using tools,
+  // emitting "the conversation got mixed up — fragments of tool output
+  // without a clear request" and rambling for tens of KB until max_wait.
+  // The fix: only inject the user-message preamble on real user turns,
+  // never on synthetic tool_result turns.
+  const tools = [
+    { type: 'function', function: { name: 'Bash', description: 'Shell.', parameters: { type: 'object' } } },
+  ];
+
+  it('injects preamble on a first-turn real user message', () => {
+    const out = normalizeMessagesForCascade(
+      [{ role: 'user', content: '帮我读一下 README' }],
+      tools,
+    );
+    assert.equal(out.length, 1);
+    assert.ok(out[0].content.startsWith('Tools available this turn:'),
+      `expected preamble prefix, got: ${out[0].content.slice(0, 80)}`);
+    assert.ok(out[0].content.endsWith('帮我读一下 README'));
+  });
+
+  it('does NOT inject preamble when the last user message is a synthetic tool_result', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: '帮我读一下 README' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"cat README.md"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'README contents…' },
+      ],
+      tools,
+    );
+    // The first user turn must NOT have a preamble (it isn't the LAST user
+    // message); the rewritten tool_result turn must NOT have a preamble
+    // (it's a synthetic wrapper, not a real user message).
+    assert.equal(out[0].role, 'user');
+    assert.ok(!out[0].content.startsWith('Tools available this turn:'),
+      'first-turn user must not be polluted when a tool_result follows');
+    const last = out[out.length - 1];
+    assert.equal(last.role, 'user');
+    assert.ok(last.content.startsWith('<tool_result'),
+      `expected pure tool_result wrapper, got: ${last.content.slice(0, 80)}`);
+    assert.ok(!last.content.includes('Tools available this turn:'),
+      'tool_result turn must not be polluted with the user-message preamble');
+  });
+
+  it('still injects on the latest real user turn even when older turns contain tool_results', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'first request' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"pwd"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_1', content: '/tmp' },
+        { role: 'assistant', content: 'done.' },
+        { role: 'user', content: 'follow-up question' },
+      ],
+      tools,
+    );
+    const last = out[out.length - 1];
+    assert.equal(last.role, 'user');
+    assert.ok(last.content.startsWith('Tools available this turn:'),
+      'latest real user turn must receive the preamble');
+    assert.ok(last.content.endsWith('follow-up question'));
   });
 });

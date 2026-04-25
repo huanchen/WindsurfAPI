@@ -118,18 +118,134 @@ const MODEL_PROVIDERS = {
   o3: 'OpenAI', o4: 'OpenAI',
 };
 
-function neutralizeCascadeIdentity(text, modelName) {
+export function neutralizeCascadeIdentity(text, modelName) {
   if (!text || !modelName) return text;
   const provider = MODEL_PROVIDERS[Object.keys(MODEL_PROVIDERS).find(k => modelName.toLowerCase().startsWith(k)) || ''];
   if (!provider) return text;
   return text
+    // First-person identity claims
     .replace(/\bI am Cascade\b/gi, `I am ${modelName}`)
     .replace(/\bI'm Cascade\b/gi, `I'm ${modelName}`)
     .replace(/\bmy name is Cascade\b/gi, `my name is ${modelName}`)
+    // Third-person self-reference common in Cascade prose
     .replace(/\bCascade, an AI coding assistant\b/gi, `${modelName}, an AI assistant`)
+    .replace(/\bCascade is an? (?:AI )?(?:coding )?assistant\b/gi, `${modelName} is an AI assistant`)
+    .replace(/\b(?:As|Acting as) Cascade\b/g, `As ${modelName}`)
+    // Provider attribution
     .replace(/\bCascade, made by (?:Codeium|Windsurf)\b/gi, `${modelName}, made by ${provider}`)
+    .replace(/\b(?:Codeium|Windsurf)(?:['’]s)? Cascade\b/g, modelName)
     .replace(/\bdeveloped by (?:Codeium|Windsurf)\b/gi, `developed by ${provider}`)
-    .replace(/\bcreated by (?:Codeium|Windsurf)\b/gi, `created by ${provider}`);
+    .replace(/\bcreated by (?:Codeium|Windsurf)\b/gi, `created by ${provider}`)
+    .replace(/\bbuilt by (?:Codeium|Windsurf)\b/gi, `built by ${provider}`)
+    // Cascade-flavoured workspace narration. The model regularly says things
+    // like "Cascade's workspace at /tmp/windsurf-workspace" — sanitizeText
+    // already scrubs the path; this strips the lingering "Cascade's" /
+    // "the Cascade" prefix so the sentence reads naturally. The leading
+    // "the " is consumed by the same regex so we don't end up with the
+    // double-article artefact ("the the workspace").
+    .replace(/\b(?:the )?Cascade(?:['’]s)? workspace\b/gi, 'the workspace');
+}
+
+/**
+ * Lift authoritative environment facts from the caller's request so they
+ * can be re-emitted into the proto-level tool_calling_section override.
+ *
+ * Why this exists: Claude Code (and most Anthropic-format clients) put
+ * working-directory / git / platform info in an `<env>` block inside the
+ * system prompt or a `<system-reminder>` user block. That information IS
+ * forwarded to Cascade (client.js prepends sysText to the user text), but
+ * Cascade's own planner system prompt is structurally more authoritative
+ * to the upstream model than user-message text — and Cascade's prompt
+ * tells the model "your workspace is /tmp/windsurf-workspace". Result:
+ * Opus issues LS / Read against /tmp/windsurf-workspace instead of the
+ * user's real cwd, and confidently narrates the contents of an empty
+ * scratch dir back as if it were the user's project.
+ *
+ * Lifting cwd into tool_calling_section gives it equal authority weight
+ * inside the model's mental model, and the surrounding wording in
+ * buildToolPreambleForProto explicitly tells the model to prefer THIS
+ * environment over any prior workspace assumption.
+ *
+ * Parser is intentionally lenient: it scans every message's text content
+ * (string or content-block array) and pulls out the standard Claude Code
+ * `<env>` keys. If nothing is found, returns '' and the override gets no
+ * environment block (existing behaviour preserved).
+ */
+export function extractCallerEnvironment(messages) {
+  if (!Array.isArray(messages)) return '';
+  const seen = new Set();
+  const out = [];
+
+  // Match the cwd phrasing every Anthropic-format client we have seen in
+  // the wild emits, while staying narrow enough that prose mentions like
+  // "the working directory in the docs" don't trip it. Two formats matter:
+  //
+  //   (a) Canonical `<env>` key/value block (older Claude Code, opencode,
+  //       Cline): `Working directory: /path` on its own line. Must allow
+  //       a leading `<env>` tag, optional `-`/`*` bullet prefix, and `:`
+  //       or `=` separator.
+  //
+  //   (b) Claude Code 2.1+ prose system prompt: `…and the current working
+  //       directory is /path.`  No newline anchor, no separator, the path
+  //       just trails the phrase. (Confirmed via the env-NOT-lifted probe
+  //       diagnostic against Claude Code v2.1.114.)
+  //
+  // The capture group is locked to `[/~]…` so we only grab actual-looking
+  // paths — "the working directory you choose" or similar abstract prose
+  // never has a `/` or `~` in the captured slot and is rejected.
+  const PATH_TAIL = `[\\/~][^\\s\`'"<>\\n.,;)]+`;
+  const PATTERNS = [
+    ['cwd', new RegExp(
+      // Form (a): line-anchored key/value
+      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:Working directory|cwd|<cwd>)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
+      // Form (b): prose "current working directory is /path"
+      `|(?:current\\s+working\\s+directory(?:\\s+is)?)\\s*[:=]?\\s*\`?(${PATH_TAIL})\`?`,
+      'i'
+    ), (v) => `- Working directory: ${v}`],
+    ['git', /(?:^|\n)\s*(?:[-*]\s+)?Is directory a git repo\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
+    ['platform', /(?:^|\n)\s*(?:[-*]\s+)?Platform\s*[:=]\s*([^\n<]+)/i, (v) => `- Platform: ${v}`],
+    ['os', /(?:^|\n)\s*(?:[-*]\s+)?OS Version\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
+  ];
+
+  for (const m of messages) {
+    if (!m) continue;
+    let content;
+    if (typeof m.content === 'string') content = m.content;
+    else if (Array.isArray(m.content)) content = m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n');
+    else continue;
+    if (!content) continue;
+
+    for (const [key, re, fmt] of PATTERNS) {
+      if (seen.has(key)) continue;
+      const match = content.match(re);
+      if (match) {
+        // The cwd pattern has two alternative capture groups (one per
+        // accepted form); the others have one. Pick the first non-empty.
+        const value = (match[1] || match[2] || '').trim();
+        // Reject obvious garbage (empty after trim, control chars, our own
+        // redaction marker leaking back in).
+        if (!value || /[\x00-\x1f]/.test(value) || value === '…') continue;
+        seen.add(key);
+        out.push(fmt(value));
+      }
+    }
+    if (seen.size === PATTERNS.length) break;
+  }
+
+  // Only emit an environment block if we actually have the cwd. Platform /
+  // OS / git status without cwd are useless for the original goal (tell
+  // the model where to run tools) AND adding them anyway makes the
+  // tool_calling_section preamble look like a system prompt with no
+  // real signal — which trips Opus 4.7's injection guard, observed live
+  // when Claude Code v2.1.114 (which does NOT include cwd in its system
+  // prompt) caused us to emit an env block containing only Platform +
+  // OS Version, and Opus refused with "the message I received is a
+  // system prompt for Claude Code along with truncated tool output".
+  // Sticking to the rule "no cwd → no block" both removes the noise and
+  // lets the model learn cwd via its own `pwd` tool call (which already
+  // works on every Anthropic-format client we have tested).
+  if (!seen.has('cwd')) return '';
+  return out.join('\n');
 }
 
 // Rough token estimate (~4 chars/token). Used only to populate the
@@ -318,7 +434,35 @@ export async function handleChatCompletions(body) {
   // Also inject into the last user message as fallback — some models in
   // NO_TOOL mode ignore the SectionOverride entirely and refuse to call
   // tools unless they see the definitions in the conversation itself. (#22)
-  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice) : '';
+  // Lift the caller's environment hints (cwd, git status, platform) into
+  // the proto-level system slot so Cascade's authoritative planner system
+  // prompt can no longer override them with /tmp/windsurf-workspace
+  // priors. See extractCallerEnvironment() above for the parser.
+  const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
+  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
+  // Diagnostic: surface whether environment lifting actually fired so a real
+  // request log immediately tells us if Claude Code 2.x changed `<env>` block
+  // wording, or if the extraction guard rejected a valid hint. Cheap to log,
+  // and the alternative is a 200-char Probe head that hides the env block.
+  if (emulateTools) {
+    if (callerEnv) {
+      const compact = callerEnv.replace(/\s+/g, ' ').slice(0, 200);
+      log.info(`Chat[${reqId}]: env lifted into tool_calling_section: ${compact}`);
+    } else {
+      // Hunt for env-shaped substrings so we can see WHY the extractor
+      // missed (e.g. Claude Code put cwd in a freeform paragraph instead
+      // of the canonical `Working directory: …` line).
+      let probe = '';
+      for (const m of (messages || [])) {
+        const c = typeof m?.content === 'string' ? m.content
+          : Array.isArray(m?.content) ? m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n')
+          : '';
+        const hit = c.match(/[^.\n]{0,40}(?:working directory|cwd|<env>|<cwd>)[^.\n]{0,80}/i);
+        if (hit) { probe = hit[0].replace(/\s+/g, ' ').slice(0, 160); break; }
+      }
+      log.info(`Chat[${reqId}]: env NOT lifted (extractor returned empty)${probe ? '; nearest env-shaped substring in messages: ' + probe : '; no env-shaped substring found in any message'}`);
+    }
+  }
   let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, tools)
     : [...messages];
