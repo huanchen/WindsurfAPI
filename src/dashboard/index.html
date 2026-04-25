@@ -4708,6 +4708,15 @@ const App = {
   CONTRIBUTORS: [
     {
       login: 'baily-zhang',
+      pr: 62,
+      weight: 'S+',
+      weightLabel: '第四次出手 · dashboard inline-script 静态解析 regression 防御',
+      mergedAt: '2026-04-25',
+      title: 'fix(dashboard): 修复 Credits 文案导致控制台空白',
+      summary: 'commit 60fcd5a 写新 Credits 文案时 Codeium 那个所有格在 inline single-quoted JS string 里被过度转义，整个 dashboard 主脚本 parse fail —— 页面能开但 stats / accounts 等 panel 全空白。几小时内发现修字面 + 新加 test/dashboard-syntax.test.js 用 V8 静态解析 inline script blocks，未来同类 escape / copy 错误下次直接卡 npm test 阶段，比 live UI 砖掉强。',
+    },
+    {
+      login: 'baily-zhang',
       pr: 61,
       weight: 'S+',
       weightLabel: '第三次出手 + Opus 4.7 多模态体验救星',
