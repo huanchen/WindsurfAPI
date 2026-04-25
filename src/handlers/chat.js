@@ -28,6 +28,24 @@ const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
 
+// Cap exponential backoff before falling over to the next account when
+// upstream Cascade returns "internal error occurred". Without this a
+// 9-account pool hammers the upstream within ~10s and every attempt
+// sees the same transient — the OpenClaw real-scenario probe (#28)
+// caught this as 11/20 failures even though the proxy itself is
+// healthy. With backoff capped at 5s the Nth attempt sees a cooler
+// upstream and has a meaningful chance of succeeding.
+//   retry 0 → 500ms, 1 → 1s, 2 → 2s, 3 → 4s, ≥4 → 5s
+async function internalErrorBackoff(retryIdx) {
+  const ms = Math.min(500 * Math.pow(2, retryIdx), 5000);
+  await new Promise(r => setTimeout(r, ms));
+  return ms;
+}
+
+function upstreamTransientErrorMessage(model, triedCount) {
+  return `${model} 上游 Windsurf Cascade 服务瞬态故障：已在 ${triedCount} 个账号上重试都收到 internal_error。这是上游服务端的瞬时问题，反代无法绕过，建议 30-60 秒后重试。`;
+}
+
 /**
  * Extract a clean JSON payload from a model response. Handles three common
  * shapes a non-constrained-decoding model produces when asked for JSON:
@@ -613,6 +631,12 @@ export async function handleChatCompletions(body) {
   // Non-stream: retry with a different account on model-not-available errors
   const tried = [];
   let lastErr = null;
+  // Count upstream_internal_error hits separately from rate_limit / model
+  // errors. When >0 we add backoff between attempts (give upstream a
+  // breather), and when ALL attempts hit it we surface a clean
+  // upstream_transient_error instead of the misleading "rate limit"
+  // message the all-accounts-exhausted branch would otherwise produce.
+  let internalCount = 0;
   // Dynamic: try every active account in the pool (capped at 10) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
@@ -743,6 +767,16 @@ export async function handleChatCompletions(body) {
       log.warn(`Account ${acct.email} rate-limited on ${displayModel}, trying next account`);
       continue;
     }
+    // Upstream Cascade transient (internal error occurred): back off
+    // before falling over so the next account doesn't hit the same hot
+    // upstream window. Counts toward internalCount for final-error
+    // classification below.
+    if (errType === 'upstream_internal_error') {
+      internalCount++;
+      const backoffMs = await internalErrorBackoff(internalCount - 1);
+      log.warn(`Chat[${reqId}]: ${acct.email} upstream internal_error, waited ${backoffMs}ms before next account`);
+      continue;
+    }
     // Model not available on this account (permission_denied, etc.)
     if (errType === 'model_not_available') {
       log.warn(`Account ${acct.email} cannot serve ${displayModel}, trying next account`);
@@ -755,6 +789,23 @@ export async function handleChatCompletions(body) {
       // accurate across success, retry, and abort paths.
       if (acct) releaseAccount(acct.apiKey);
     }
+  }
+  // If every attempt (or every-attempt-since-the-last-success) hit
+  // upstream_internal_error, the proxy's account-rotation can't fix it —
+  // it's a Cascade server-side transient. Surface a clean message that
+  // tells the caller "this is upstream, retry shortly" instead of the
+  // misleading "rate limit" / "model not available" they'd otherwise
+  // see from lastErr.
+  if (internalCount > 0 && tried.length > 0 && internalCount >= tried.length) {
+    if (checkedOutReuseEntry && fpBefore) {
+      poolCheckin(fpBefore, checkedOutReuseEntry);
+      log.info(`Chat[${reqId}]: restored checked-out cascade after all-internal-error chain`);
+    }
+    log.error(`Chat[${reqId}]: ${tried.length}/${tried.length} accounts hit upstream_internal_error — surfacing upstream_transient_error`);
+    return {
+      status: 502,
+      body: { error: { message: upstreamTransientErrorMessage(displayModel, tried.length), type: 'upstream_transient_error' } },
+    };
   }
   // If all accounts exhausted, check if it's because they're all rate-limited
   if (!lastErr || lastErr.status === 429) {
@@ -931,8 +982,11 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       }
     }
     return {
-      status: err.isModelError ? 403 : 502,
-      body: { error: { message: sanitizeText(err.message), type: err.isModelError ? 'model_not_available' : 'upstream_error' } },
+      status: isInternal ? 502 : (err.isModelError ? 403 : 502),
+      body: { error: {
+        message: sanitizeText(err.message),
+        type: isInternal ? 'upstream_internal_error' : (err.isModelError ? 'model_not_available' : 'upstream_error'),
+      } },
     };
   }
 }
@@ -1001,6 +1055,11 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       let rolePrinted = false;
       let currentApiKey = null;
       let lastErr = null;
+      // Same purpose as nonStreamResponse's internalCount: track upstream
+      // internal_error hits across attempts so we can (a) back off
+      // between accounts and (b) surface upstream_transient_error when
+      // every attempt hit it.
+      let streamInternalCount = 0;
       // Dynamic: try every active account in the pool (capped at 10) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
@@ -1281,7 +1340,13 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             // Retry only if nothing has been streamed yet AND it's a retryable error
             if (!hadSuccess && (err.isModelError || isRateLimit)) {
               const tag = isRateLimit ? 'rate_limit' : isInternal ? 'internal_error' : 'model_error';
-              log.warn(`Account ${acct.email} failed (${tag}) on ${model}, trying next`);
+              if (isInternal) {
+                streamInternalCount++;
+                const backoffMs = await internalErrorBackoff(streamInternalCount - 1);
+                log.warn(`Chat[${reqId}] stream: ${acct.email} upstream internal_error, waited ${backoffMs}ms before next account`);
+              } else {
+                log.warn(`Account ${acct.email} failed (${tag}) on ${model}, trying next`);
+              }
               continue;
             }
             break;
@@ -1299,9 +1364,15 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
         recordRequest(model, false, Date.now() - startTime, currentApiKey);
         try {
           const rl = isAllRateLimited(modelKey);
+          const allInternal = streamInternalCount > 0 && tried.length > 0 && streamInternalCount >= tried.length;
           const errMsg = rl.allLimited
             ? `${model} 所有账号均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`
+            : allInternal
+            ? upstreamTransientErrorMessage(model, tried.length)
             : sanitizeText(lastErr?.message || 'no accounts');
+          if (allInternal) {
+            log.error(`Chat[${reqId}] stream: ${tried.length}/${tried.length} accounts hit upstream_internal_error — surfacing upstream_transient_error`);
+          }
           if (!hadSuccess && checkedOutReuseEntry && fpBefore) {
             poolCheckin(fpBefore, checkedOutReuseEntry);
             log.info(`Chat[${reqId}]: restored checked-out cascade after failed stream`);
