@@ -380,6 +380,55 @@ export async function handleChatCompletions(body) {
     }
   } catch {}
 
+  // Reject pathologically empty user turns. Without this, an empty
+  // `user.content` slips through and the model answers against the
+  // system prompt as if it were the user's prompt, producing nonsense
+  // output (caught by the OpenClaw human-scenario probe — scenario #14).
+  // Match OpenAI's behaviour: 400 invalid_request_error.
+  {
+    const lastUser = (messages || []).filter(m => m?.role === 'user').pop();
+    if (lastUser) {
+      const c = lastUser.content;
+      let trimmedBytes = 0;
+      if (typeof c === 'string') trimmedBytes = c.trim().length;
+      else if (Array.isArray(c)) trimmedBytes = c.reduce((n, p) => {
+        if (typeof p?.text === 'string') return n + p.text.trim().length;
+        // Non-text parts (image_url / input_audio / file / etc.) count as
+        // non-empty content — only pure-text empties trigger the 400.
+        if (p && typeof p === 'object' && p.type && p.type !== 'text') return n + 1;
+        return n;
+      }, 0);
+      if (trimmedBytes === 0) {
+        return {
+          status: 400,
+          body: {
+            error: {
+              message: 'The last user message has empty content. Provide a non-empty user prompt.',
+              type: 'invalid_request_error',
+              param: 'messages',
+            },
+          },
+        };
+      }
+    }
+  }
+
+  // Heavy clients (OpenClaw 24KB, opencode + omo, Cline with full tool
+  // catalog) ship system prompts that approach Cascade's ~30KB panel-
+  // state ceiling. When that happens upstream intermittently returns
+  // `internal error occurred` or invalidates panel state. Surface the
+  // size in logs so intermittent failures can be correlated with caller
+  // payload rather than chased as proxy bugs.
+  {
+    const sysBytes = (messages || []).filter(m => m?.role === 'system').reduce((n, m) => {
+      const c = m?.content;
+      return n + (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((k, p) => k + (typeof p?.text === 'string' ? p.text.length : 0), 0) : 0);
+    }, 0);
+    if (sysBytes >= 8000) {
+      log.warn(`Probe[${reqId}]: large system prompt ${Math.round(sysBytes/1024)}KB — heavy clients (OpenClaw / Cline / opencode) may hit upstream panel-state retries above ~30KB`);
+    }
+  }
+
   const wantJson = response_format?.type === 'json_object' || response_format?.type === 'json_schema';
   if (wantJson) {
     let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object.';
