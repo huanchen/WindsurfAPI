@@ -172,6 +172,16 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     assert.equal(buildToolPreamble([{ type: 'other' }]), '');
     assert.equal(buildToolPreamble([{ type: 'function' }]), '');
   });
+
+  it('adds Bash and Read argument fidelity rules only to the proto preamble', () => {
+    const full = buildToolPreambleForProto(manyTools, 'auto');
+    assert.match(full, /Tool argument fidelity rules:/);
+    assert.match(full, /Bash: arguments MUST include the full command string/);
+    assert.match(full, /Preserve quotes, flags, pipes, redirections/);
+    assert.match(full, /Read: use "file_path" exactly/);
+    assert.ok(!preamble.includes('Tool argument fidelity rules:'),
+      'user-message fallback must remain compact and schema-free');
+  });
 });
 
 describe('buildCompactToolPreambleForProto (payload budget fallback)', () => {
@@ -254,6 +264,18 @@ describe('buildCompactToolPreambleForProto (payload budget fallback)', () => {
     for (const re of banned) {
       assert.ok(!re.test(compact), `compact preamble must not match ${re}`);
     }
+  });
+
+  it('compact form keeps known-tool argument fidelity rules even without schemas', () => {
+    const tools = [
+      { type: 'function', function: { name: 'Bash', description: 'Run shell', parameters: { type: 'object', properties: { command: { type: 'string' } } } } },
+      { type: 'function', function: { name: 'Read', description: 'Read file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } } },
+    ];
+    const compact = buildCompactToolPreambleForProto(tools, 'auto');
+    assert.match(compact, /Tool argument fidelity rules:/);
+    assert.match(compact, /Bash: arguments MUST include the full command string/);
+    assert.match(compact, /Read: use "file_path" exactly/);
+    assert.ok(!compact.includes('"properties"'), 'compact form must still avoid full schemas');
   });
 });
 
