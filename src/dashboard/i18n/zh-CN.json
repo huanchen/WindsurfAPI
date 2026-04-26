@@ -518,6 +518,8 @@
 
   "credits": {
     "contributors": "核心贡献者",
+    "history": "贡献历史 · {{count}} 项",
+    "contributionDetails": "贡献详情",
     "cta": {
       "title": "想加入这份名单？",
       "desc": "欢迎到 GitHub 提 issue 或 pull request — 不管是修 bug、加模型、改 UI 还是发现安全问题，都会被记录在这里。",

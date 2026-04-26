@@ -518,6 +518,8 @@
 
   "credits": {
     "contributors": "Core Contributors",
+    "history": "Contributions · {{count}}",
+    "contributionDetails": "Details",
     "cta": {
       "title": "Want to join this list?",
       "desc": "Open an issue or pull request on GitHub — bug fixes, new models, UI improvements, or security findings all get recognised here.",

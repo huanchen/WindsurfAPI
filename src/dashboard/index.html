@@ -1414,6 +1414,16 @@ tbody tr:hover td { background: var(--surface-2); }
 .contributor-card .rarity-UR { background: linear-gradient(135deg, #f5d06f, #e11d48 52%, #7c3aed); color: #fff; box-shadow: 0 0 0 1px rgba(225,29,72,0.28); }
 .contributor-card .rarity-SSR { background: linear-gradient(135deg, #f59e0b, #b45309); color: #fff7ed; box-shadow: 0 0 0 1px rgba(180,83,9,0.25); }
 .contributor-card .rarity-SR { background: var(--info-soft); color: var(--info); border: 1px solid rgba(59,130,246,0.28); }
+.contributor-card .contribution-count { font-size: 11px; color: var(--text-dim); padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5; }
+.contributor-card .history-list { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.contributor-card .history-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); }
+.contributor-card .history-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.contributor-card .history-head .pr-link { font-size: 12px; color: var(--text-dim); text-decoration: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; }
+.contributor-card .history-head .pr-link:hover { color: var(--accent); border-color: var(--accent); }
+.contributor-card .history-head .merged-at { font-size: 11px; color: var(--text-dim); }
+.contributor-card .history-rarity-label { font-size: 11px; color: var(--text-dim); font-style: italic; flex: 1; min-width: 0; }
+.contributor-card .history-title { font-size: 13px; font-weight: 500; margin-top: 6px; line-height: 1.45; }
+.contributor-card .history-summary { font-size: 12px; color: var(--text-muted); line-height: 1.65; margin-top: 6px; }
 @media (max-width: 640px) {
   .contributor-list { grid-template-columns: 1fr; }
   .contributor-card { padding: 12px; gap: 12px; }
@@ -4880,30 +4890,76 @@ const App = {
     if (weight === 'S' || weight === 'A+') return 'SSR';
     return 'SR';
   },
+  weightRank(w) {
+    return ({ 'S+': 6, 'S': 5, 'A+': 4, 'A': 3, 'B+': 2, 'B': 1 })[w] || 0;
+  },
+  groupContributors(list) {
+    const map = new Map();
+    for (const c of list) {
+      if (!map.has(c.login)) map.set(c.login, { login: c.login, prs: [] });
+      map.get(c.login).prs.push(c);
+    }
+    const groups = [];
+    for (const g of map.values()) {
+      g.prs.sort((a, b) => (b.mergedAt || '').localeCompare(a.mergedAt || ''));
+      g.latest = g.prs[0];
+      g.topWeight = g.prs.reduce((best, p) => this.weightRank(p.weight) > this.weightRank(best) ? p.weight : best, '');
+      groups.push(g);
+    }
+    groups.sort((a, b) =>
+      this.weightRank(b.topWeight) - this.weightRank(a.topWeight)
+      || (b.latest.mergedAt || '').localeCompare(a.latest.mergedAt || '')
+    );
+    return groups;
+  },
   loadCredits() {
     const body = document.getElementById('credits-body');
     if (!body) return;
-    body.innerHTML = `<div class="contributor-list">${this.CONTRIBUTORS.map(c => `
-      <div class="contributor-card">
-        <img class="avatar" src="https://github.com/${this.esc(c.login)}.png?size=128" alt="${this.esc(c.login)}" loading="lazy" onerror="this.style.visibility='hidden'">
-        <div class="meta">
-          <div class="meta-top">
-            <div class="identity">
-              <a class="name" target="_blank" rel="noopener" href="https://github.com/${this.esc(c.login)}">@${this.esc(c.login)}</a>
-              ${c.weight ? `<span class="rarity-badge rarity-${this.esc(this.contributorRarity(c.weight))}" title="${this.esc(c.weightLabel || '')}">${this.esc(this.contributorRarity(c.weight))}</span>` : ''}
+    const groups = this.groupContributors(this.CONTRIBUTORS);
+    body.innerHTML = `<div class="contributor-list">${groups.map(g => {
+      const latest = g.latest;
+      const count = g.prs.length;
+      const rarity = this.contributorRarity(g.topWeight);
+      const summaryText = count > 1
+        ? I18n.t('credits.history', { count })
+        : I18n.t('credits.contributionDetails');
+      const items = g.prs.map(p => {
+        const r = this.contributorRarity(p.weight);
+        return `
+          <li class="history-item">
+            <div class="history-head">
+              <a class="pr-link" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${p.pr}">PR #${p.pr}</a>
+              <span class="merged-at">${this.esc(p.mergedAt || '')}</span>
+              ${p.weight ? `<span class="rarity-badge rarity-${this.esc(r)}" title="${this.esc(p.weightLabel || '')}">${this.esc(r)}</span>` : ''}
+              ${p.weightLabel ? `<span class="history-rarity-label">${this.esc(p.weightLabel)}</span>` : ''}
             </div>
-            <div class="links">
-              <a class="pr-link" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${c.pr}">PR #${c.pr}</a>
-              <span class="merged-at">${this.esc(c.mergedAt)}</span>
+            <div class="history-title">${this.esc(p.title)}</div>
+            <div class="history-summary">${this.esc(p.summary)}</div>
+          </li>`;
+      }).join('');
+      return `
+        <div class="contributor-card">
+          <img class="avatar" src="https://github.com/${this.esc(g.login)}.png?size=128" alt="${this.esc(g.login)}" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="meta">
+            <div class="meta-top">
+              <div class="identity">
+                <a class="name" target="_blank" rel="noopener" href="https://github.com/${this.esc(g.login)}">@${this.esc(g.login)}</a>
+                ${g.topWeight ? `<span class="rarity-badge rarity-${this.esc(rarity)}" title="${this.esc(latest.weightLabel || '')}">${this.esc(rarity)}</span>` : ''}
+                <span class="contribution-count">×${count}</span>
+              </div>
+              <div class="links">
+                <a class="pr-link" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${latest.pr}">PR #${latest.pr}</a>
+                <span class="merged-at">${this.esc(latest.mergedAt || '')}</span>
+              </div>
             </div>
+            <div class="pr-title">${this.esc(latest.title)}</div>
+            <details class="summary-toggle">
+              <summary>${this.esc(summaryText)}</summary>
+              <ol class="history-list">${items}</ol>
+            </details>
           </div>
-          <div class="pr-title">${this.esc(c.title)}</div>
-          <details class="summary-toggle">
-            <summary>贡献详情</summary>
-            <div class="summary">${this.esc(c.summary)}</div>
-          </details>
-        </div>
-      </div>`).join('')}</div>`;
+        </div>`;
+    }).join('')}</div>`;
   },
   esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
   // For values interpolated into an inline `onclick="App.f('${...}')"`
