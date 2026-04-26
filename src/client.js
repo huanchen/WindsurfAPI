@@ -162,7 +162,13 @@ function cascadeHistoryBudget(modelUid) {
 }
 
 const CASCADE_TIMEOUTS = {
-  maxWaitMs:        positiveIntEnv('CASCADE_MAX_WAIT_MS', 180_000),
+  // Absolute upper bound. The real "is the cascade alive" gate is
+  // warmStallMs (25s of no progress → exit). 180s used to be the cap and
+  // bit slow-streaming long outputs (issue #59 4.6 hit this at 15349
+  // chars/180s = ~85 chars/s) — Claude Code then kicked off an awkward
+  // continuation request. 600s gives long outputs room to finish; the
+  // warm stall still exits stuck cascades within 25s of true silence.
+  maxWaitMs:        positiveIntEnv('CASCADE_MAX_WAIT_MS', 600_000),
   pollIntervalMs:   positiveIntEnv('CASCADE_POLL_INTERVAL_MS', 500),
   coldStallBaseMs:  positiveIntEnv('CASCADE_COLD_STALL_BASE_MS', 30_000),
   warmStallMs:      positiveIntEnv('CASCADE_WARM_STALL_MS', 25_000),
