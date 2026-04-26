@@ -20,7 +20,7 @@ import {
 } from '../conversation-pool.js';
 import {
   normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText,
-  buildToolPreambleForProto,
+  buildToolPreambleForProto, buildCompactToolPreambleForProto,
 } from './tool-emulation.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
@@ -599,7 +599,39 @@ export async function handleChatCompletions(body, context = {}) {
   // prompt can no longer override them with /tmp/windsurf-workspace
   // priors. See extractCallerEnvironment() above for the parser.
   const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
-  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
+  let toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
+  // Payload budget for the proto-level tool preamble. The upstream LS
+  // panel state caps total request size at ~30KB; the preamble alone can
+  // approach that with 30+ tools (Claude Code, opencode, Cline). Past the
+  // soft cap we drop full schemas and ship names-only — the model still
+  // knows what tools exist and how to invoke them, just not parameter
+  // shapes. Past the hard cap we abort with a 413-style 400 so callers
+  // can trim instead of failing in panel-state retries.
+  const TOOL_PREAMBLE_SOFT_BYTES = parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
+  const TOOL_PREAMBLE_HARD_BYTES = parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
+  if (emulateTools && toolPreamble) {
+    const fullBytes = Buffer.byteLength(toolPreamble, 'utf8');
+    if (fullBytes > TOOL_PREAMBLE_HARD_BYTES) {
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds hard cap ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB; rejecting (${(tools || []).length} tools)`);
+      return {
+        status: 400,
+        body: {
+          error: {
+            message: `Tool definitions are too large (${Math.round(fullBytes / 1024)}KB > ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB). Reduce the number of tools or shorten parameter schemas.`,
+            type: 'invalid_request_error',
+            param: 'tools',
+            code: 'tool_preamble_too_large',
+          },
+        },
+      };
+    }
+    if (fullBytes > TOOL_PREAMBLE_SOFT_BYTES) {
+      const compact = buildCompactToolPreambleForProto(tools || [], tool_choice, callerEnv);
+      const compactBytes = Buffer.byteLength(compact, 'utf8');
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds soft cap ${Math.round(TOOL_PREAMBLE_SOFT_BYTES / 1024)}KB; falling back to names-only preamble (${Math.round(compactBytes / 1024)}KB, ${(tools || []).length} tools)`);
+      toolPreamble = compact;
+    }
+  }
   // Diagnostic: surface whether environment lifting actually fired so a real
   // request log immediately tells us if Claude Code 2.x changed `<env>` block
   // wording, or if the extraction guard rejected a valid hint. Cheap to log,

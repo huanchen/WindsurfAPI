@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildToolPreamble, buildToolPreambleForProto } from '../src/handlers/tool-emulation.js';
+import { buildToolPreamble, buildToolPreambleForProto, buildCompactToolPreambleForProto } from '../src/handlers/tool-emulation.js';
 
 describe('tool preamble forbidden wording', () => {
   it('does not emit injection-guard trigger phrases from any preamble path', () => {
@@ -9,6 +9,8 @@ describe('tool preamble forbidden wording', () => {
       buildToolPreamble(tools),
       buildToolPreambleForProto(tools, 'auto', '- Working directory: /repo'),
       buildToolPreambleForProto(tools, 'required', ''),
+      buildCompactToolPreambleForProto(tools, 'auto', '- Working directory: /repo'),
+      buildCompactToolPreambleForProto(tools, 'required', ''),
     ];
     for (const out of outputs) {
       assert.doesNotMatch(out, /\bIGNORE\b/i);

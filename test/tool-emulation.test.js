@@ -4,6 +4,8 @@ import {
   ToolCallStreamParser,
   parseToolCallsFromText,
   buildToolPreamble,
+  buildToolPreambleForProto,
+  buildCompactToolPreambleForProto,
   normalizeMessagesForCascade,
 } from '../src/handlers/tool-emulation.js';
 
@@ -169,6 +171,89 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     assert.equal(buildToolPreamble([]), '');
     assert.equal(buildToolPreamble([{ type: 'other' }]), '');
     assert.equal(buildToolPreamble([{ type: 'function' }]), '');
+  });
+});
+
+describe('buildCompactToolPreambleForProto (payload budget fallback)', () => {
+  // Issue #67-adjacent: Claude Code can ship 30+ tools, each with multi-KB
+  // parameter schemas. The full proto-level preamble was being doubled into
+  // both field 12 and field 10 of CascadeConversationalPlannerConfig and
+  // pushing total LS panel state past ~30KB, causing tools to silently fail
+  // when deployed to cloud. The compact path keeps the protocol contract
+  // and tool names but drops every parameter schema.
+  const bigTools = Array.from({ length: 30 }, (_, i) => ({
+    type: 'function',
+    function: {
+      name: `tool_${i}`,
+      description: `Description for tool ${i} that goes on for a while to bulk up the schema.`,
+      parameters: {
+        type: 'object',
+        properties: Object.fromEntries(
+          Array.from({ length: 15 }, (_, j) => [`param_${j}`, {
+            type: 'string',
+            description: `Parameter ${j} of tool ${i}, with verbose explanation that runs long.`,
+            enum: ['option_a', 'option_b', 'option_c', 'option_d', 'option_e'],
+          }])
+        ),
+        required: Array.from({ length: 15 }, (_, j) => `param_${j}`),
+      },
+    },
+  }));
+
+  it('compact form is dramatically smaller than full schemas', () => {
+    const full = buildToolPreambleForProto(bigTools, 'auto');
+    const compact = buildCompactToolPreambleForProto(bigTools, 'auto');
+    assert.ok(full.length > 20000, `expected full to be heavy, got ${full.length}B`);
+    assert.ok(compact.length < 2000, `compact must be tiny, got ${compact.length}B`);
+    assert.ok(compact.length < full.length / 5, 'compact must be at least 5x smaller');
+  });
+
+  it('compact form still names every tool and describes the protocol', () => {
+    const compact = buildCompactToolPreambleForProto(bigTools, 'auto');
+    for (let i = 0; i < bigTools.length; i++) {
+      assert.ok(compact.includes(`tool_${i}`), `must mention tool_${i}`);
+    }
+    assert.ok(compact.includes('<tool_call>'), 'must describe emission format');
+  });
+
+  it('compact form omits parameter schemas entirely', () => {
+    const compact = buildCompactToolPreambleForProto(bigTools, 'auto');
+    assert.ok(!compact.includes('param_0'), 'must NOT include parameter names');
+    assert.ok(!compact.includes('option_a'), 'must NOT include enum values');
+    assert.ok(!compact.includes('```json'), 'must NOT include JSON schema fences');
+  });
+
+  it('compact form preserves environment block when provided', () => {
+    const compact = buildCompactToolPreambleForProto(
+      bigTools, 'auto',
+      '- Working directory: /home/user/project\n- Platform: linux'
+    );
+    assert.ok(compact.includes('Environment facts'));
+    assert.ok(compact.includes('/home/user/project'));
+  });
+
+  it('compact form respects tool_choice=required', () => {
+    const compact = buildCompactToolPreambleForProto(bigTools, 'required');
+    assert.ok(compact.includes('You MUST call at least one function'));
+  });
+
+  it('compact form returns empty for no tools', () => {
+    assert.equal(buildCompactToolPreambleForProto([], 'auto'), '');
+    assert.equal(buildCompactToolPreambleForProto(null, 'auto'), '');
+    assert.equal(buildCompactToolPreambleForProto([{ type: 'function' }], 'auto'), '');
+  });
+
+  it('compact form does not contain jailbreak phrasing', () => {
+    const compact = buildCompactToolPreambleForProto(bigTools, 'auto');
+    const banned = [
+      /IGNORE any earlier/i,
+      /ignore previous instructions/i,
+      /for this request only/i,
+      /\[Tool-calling context/i,
+    ];
+    for (const re of banned) {
+      assert.ok(!re.test(compact), `compact preamble must not match ${re}`);
+    }
   });
 });
 

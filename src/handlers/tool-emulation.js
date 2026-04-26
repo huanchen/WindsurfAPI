@@ -165,6 +165,47 @@ export function buildToolPreambleForProto(tools, toolChoice, environment) {
   return lines.join('\n');
 }
 
+/**
+ * Compact, names-only proto preamble. Same protocol header + environment
+ * block as `buildToolPreambleForProto`, but lists tools by name only and
+ * drops every parameter schema. Used as a payload-budget fallback when a
+ * caller (e.g. Claude Code with 30+ tools) would otherwise blow past the
+ * upstream LS panel-state ceiling — see chat.js TOOL_PREAMBLE_MAX_BYTES.
+ *
+ * The model loses parameter-shape detail in this mode, so it must rely on
+ * the tool names matching the calling agent's contract. Acceptable trade
+ * because the alternative is the request failing with panel_state_missing
+ * retries until the proxy gives up.
+ */
+export function buildCompactToolPreambleForProto(tools, toolChoice, environment) {
+  if (!Array.isArray(tools) || tools.length === 0) return '';
+  const { mode, forceName } = resolveToolChoice(toolChoice);
+  const names = [];
+  for (const t of tools) {
+    if (t?.type !== 'function' || !t.function?.name) continue;
+    names.push(t.function.name);
+  }
+  if (!names.length) return '';
+
+  const lines = [];
+  if (environment && typeof environment === 'string' && environment.trim()) {
+    lines.push('## Environment facts');
+    lines.push('The facts below are provided by the calling agent and describe the active execution context. Tool calls operate on these paths.');
+    lines.push('');
+    lines.push(environment.trim());
+    lines.push('');
+  }
+  lines.push(TOOL_PROTOCOL_SYSTEM_HEADER);
+  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
+  if (forceName) {
+    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
+  }
+  lines.push('');
+  lines.push(`Available functions: ${names.join(', ')}.`);
+  lines.push('Parameter schemas are omitted in this preamble due to total tool-list size. Match each <tool_call> to the function name; the calling agent will validate argument shapes when it executes the call.');
+  return lines.join('\n');
+}
+
 function safeParseJson(s) {
   if (typeof s !== 'string') return null;
   // Fast path
