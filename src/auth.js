@@ -27,6 +27,17 @@ let _roundRobinIndex = 0;
 const TIER_RPM = { pro: 60, free: 10, unknown: 20, expired: 0 };
 const RPM_WINDOW_MS = 60 * 1000;
 
+// Monotonic per-process counter so two reservations landing in the same
+// millisecond produce distinct `_rpmHistory` tokens. Without this,
+// `refundReservation()` could remove the wrong reservation under
+// concurrent traffic. The fractional offset stays well below 1ms so
+// numerical comparisons against ms-based cutoffs still work as expected.
+let reservationSeq = 0;
+function nextReservationToken(now) {
+  reservationSeq = (reservationSeq + 1) % 1000;
+  return now + reservationSeq / 1000;
+}
+
 function rpmLimitFor(account) {
   return TIER_RPM[account.tier || 'unknown'] ?? 20;
 }
@@ -397,15 +408,15 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
   });
 
   const { account } = candidates[0];
-  account._rpmHistory.push(now);
-  account._lastReservationAt = now;
+  const reservationTimestamp = nextReservationToken(now);
+  account._rpmHistory.push(reservationTimestamp);
   account.lastUsed = now;
   account._inflight = (account._inflight || 0) + 1;
   return {
     id: account.id, email: account.email, apiKey: account.apiKey,
     apiServerUrl: account.apiServerUrl || '',
     proxy: getEffectiveProxy(account.id) || null,
-    reservationTimestamp: now,
+    reservationTimestamp,
   };
 }
 
@@ -440,15 +451,15 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   const used = pruneRpmHistory(a, now);
   if (used >= limit) return null;
   if (modelKey && !isModelAllowedForAccount(a, modelKey)) return null;
-  a._rpmHistory.push(now);
-  a._lastReservationAt = now;
+  const reservationTimestamp = nextReservationToken(now);
+  a._rpmHistory.push(reservationTimestamp);
   a.lastUsed = now;
   a._inflight = (a._inflight || 0) + 1;
   return {
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl || '',
     proxy: getEffectiveProxy(a.id) || null,
-    reservationTimestamp: now,
+    reservationTimestamp,
   };
 }
 
@@ -674,9 +685,12 @@ export function isAllTemporarilyUnavailable(modelKey) {
     const used = pruneRpmHistory(a, now);
     if (used >= limit) {
       const oldest = a._rpmHistory?.[0];
+      // RPM window has a precise expiry — use it directly. The 30s floor
+      // only applies when no precise expiry exists (strict-reuse busy
+      // without per-account rate-limit data).
       soonestExpiry = Math.min(
         soonestExpiry,
-        oldest ? Math.max(now + 30_000, oldest + RPM_WINDOW_MS) : now + 30_000
+        oldest ? oldest + RPM_WINDOW_MS : now + 30_000
       );
       continue;
     }

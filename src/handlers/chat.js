@@ -1326,7 +1326,10 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                 if (strictReuse && checkedOutReuseEntry && fpBefore) {
                   const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
-                  lastErr = new Error(strictReuseMessage(model, retryAfterMs, availability.reason));
+                  lastErr = Object.assign(
+                    new Error(strictReuseMessage(model, retryAfterMs, availability.reason)),
+                    { type: 'rate_limit_exceeded' }
+                  );
                   log.info(`Chat[${reqId}]: strict reuse preserved cascade; owner unavailable reason=${availability.reason}`);
                   break;
                 }
@@ -1356,7 +1359,10 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                 if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
                   const availability = getAccountAvailability(acct.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
-                  lastErr = new Error(strictReuseMessage(model, retryAfterMs, availability.reason));
+                  lastErr = Object.assign(
+                    new Error(strictReuseMessage(model, retryAfterMs, availability.reason)),
+                    { type: 'rate_limit_exceeded' }
+                  );
                   log.info(`Chat[${reqId}]: strict reuse preserved cascade after preflight rate limit`);
                   break;
                 }
@@ -1531,10 +1537,20 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             // output). Close cleanly with a plain stop — the caller saw
             // whatever partial content we produced. Error details only
             // go to the server log.
-            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : temporaryUnavailable.allUnavailable ? 'rate_limit_exceeded' : 'upstream_error'));
+            const errType = allInternal
+              ? 'upstream_transient_error'
+              : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')
+                ? 'rate_limit_exceeded'
+                : 'upstream_error';
+            send(chatStreamError(errMsg, errType));
             log.warn(`Stream: partial response delivered then failed (${errMsg})`);
           } else {
-            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : temporaryUnavailable.allUnavailable ? 'rate_limit_exceeded' : 'upstream_error'));
+            const errType = allInternal
+              ? 'upstream_transient_error'
+              : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')
+                ? 'rate_limit_exceeded'
+                : 'upstream_error';
+            send(chatStreamError(errMsg, errType));
           }
           res.write('data: [DONE]\n\n');
         } catch {}
