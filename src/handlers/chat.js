@@ -369,6 +369,32 @@ function cachedUsage(messages, completionText) {
   };
 }
 
+export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
+  const full = buildToolPreambleForProto(tools || [], toolChoice, callerEnv);
+  const softBytes = opts.softBytes ?? parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
+  const hardBytes = opts.hardBytes ?? parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
+  if (!full) {
+    return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, softBytes, hardBytes };
+  }
+
+  const fullBytes = Buffer.byteLength(full, 'utf8');
+  let preamble = full;
+  let finalBytes = fullBytes;
+  let compacted = false;
+
+  if (fullBytes > softBytes) {
+    preamble = buildCompactToolPreambleForProto(tools || [], toolChoice, callerEnv);
+    finalBytes = Buffer.byteLength(preamble, 'utf8');
+    compacted = true;
+  }
+
+  if (finalBytes > hardBytes) {
+    return { ok: false, preamble, fullBytes, finalBytes, compacted, softBytes, hardBytes };
+  }
+
+  return { ok: true, preamble, fullBytes, finalBytes, compacted, softBytes, hardBytes };
+}
+
 /**
  * Build an OpenAI-shaped `usage` object, preferring server-reported token
  * counts from Cascade's CortexStepMetadata.model_usage when available, and
@@ -599,25 +625,27 @@ export async function handleChatCompletions(body, context = {}) {
   // prompt can no longer override them with /tmp/windsurf-workspace
   // priors. See extractCallerEnvironment() above for the parser.
   const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
-  let toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
+  let toolPreamble = '';
   // Payload budget for the proto-level tool preamble. The upstream LS
   // panel state caps total request size at ~30KB; the preamble alone can
   // approach that with 30+ tools (Claude Code, opencode, Cline). Past the
   // soft cap we drop full schemas and ship names-only — the model still
   // knows what tools exist and how to invoke them, just not parameter
-  // shapes. Past the hard cap we abort with a 413-style 400 so callers
-  // can trim instead of failing in panel-state retries.
-  const TOOL_PREAMBLE_SOFT_BYTES = parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
-  const TOOL_PREAMBLE_HARD_BYTES = parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
-  if (emulateTools && toolPreamble) {
-    const fullBytes = Buffer.byteLength(toolPreamble, 'utf8');
-    if (fullBytes > TOOL_PREAMBLE_HARD_BYTES) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds hard cap ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB; rejecting (${(tools || []).length} tools)`);
+  // shapes. Only the actual payload after fallback is compared with the
+  // hard cap; v2.0.9 rejected on the full-schema size before compacting,
+  // which broke real opencode / Claude Code setups with 30-50 MCP tools.
+  if (emulateTools) {
+    const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv);
+    if (budget.fullBytes > budget.softBytes && budget.compacted) {
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; falling back to names-only preamble (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
+    }
+    if (!budget.ok) {
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB after ${budget.compacted ? 'names-only fallback' : 'full-schema build'}; rejecting (${(tools || []).length} tools)`);
       return {
         status: 400,
         body: {
           error: {
-            message: `Tool definitions are too large (${Math.round(fullBytes / 1024)}KB > ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB). Reduce the number of tools or shorten parameter schemas.`,
+            message: `Tool definitions are too large (${Math.round(budget.finalBytes / 1024)}KB > ${Math.round(budget.hardBytes / 1024)}KB after compaction). Reduce the number of tools or shorten tool names.`,
             type: 'invalid_request_error',
             param: 'tools',
             code: 'tool_preamble_too_large',
@@ -625,12 +653,7 @@ export async function handleChatCompletions(body, context = {}) {
         },
       };
     }
-    if (fullBytes > TOOL_PREAMBLE_SOFT_BYTES) {
-      const compact = buildCompactToolPreambleForProto(tools || [], tool_choice, callerEnv);
-      const compactBytes = Buffer.byteLength(compact, 'utf8');
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds soft cap ${Math.round(TOOL_PREAMBLE_SOFT_BYTES / 1024)}KB; falling back to names-only preamble (${Math.round(compactBytes / 1024)}KB, ${(tools || []).length} tools)`);
-      toolPreamble = compact;
-    }
+    toolPreamble = budget.preamble;
   }
   // Diagnostic: surface whether environment lifting actually fired so a real
   // request log immediately tells us if Claude Code 2.x changed `<env>` block
