@@ -1392,26 +1392,35 @@ tbody tr:hover td { background: var(--surface-2); }
   .sidebar nav a { justify-content: center; padding: 10px; }
   .main { margin-left: 60px; padding: 20px 16px; }
 }
-.contributor-list { display: flex; flex-direction: column; gap: 12px; }
-.contributor-card { display: flex; gap: 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: border-color .15s; }
+.contributor-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+.contributor-card { display: flex; gap: 14px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: border-color .15s; min-width: 0; }
 .contributor-card:hover { border-color: var(--accent); }
-.contributor-card .avatar { width: 64px; height: 64px; border-radius: 50%; flex: none; border: 2px solid var(--border); background: var(--surface-2); object-fit: cover; }
+.contributor-card .avatar { width: 48px; height: 48px; border-radius: 50%; flex: none; border: 2px solid var(--border); background: var(--surface-2); object-fit: cover; }
 .contributor-card .meta { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
-.contributor-card .meta-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.contributor-card .meta-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.contributor-card .identity { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.contributor-card .links { display: flex; align-items: center; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .contributor-card .meta-top .name { color: var(--accent); font-weight: 600; font-size: 15px; text-decoration: none; }
 .contributor-card .meta-top .name:hover { text-decoration: underline; }
 .contributor-card .meta-top .pr-link { font-size: 12px; color: var(--text-dim); text-decoration: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; }
 .contributor-card .meta-top .pr-link:hover { color: var(--accent); border-color: var(--accent); }
 .contributor-card .meta-top .merged-at { font-size: 11px; color: var(--text-dim); }
-.contributor-card .pr-title { font-weight: 500; margin-top: 4px; font-size: 13px; }
+.contributor-card .pr-title { font-weight: 500; margin-top: 2px; font-size: 13px; line-height: 1.45; }
+.contributor-card .summary-toggle { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
+.contributor-card .summary-toggle summary { cursor: pointer; width: fit-content; user-select: none; }
+.contributor-card .summary-toggle summary:hover { color: var(--accent); }
 .contributor-card .summary { font-size: 13px; color: var(--text-muted); line-height: 1.65; margin-top: 6px; }
-.contributor-card .weight-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; font-family: var(--font-mono, ui-monospace, monospace); line-height: 1.5; }
-.contributor-card .weight-S-plus { background: linear-gradient(135deg, #f3c677, #d97706); color: #3a2806; box-shadow: 0 0 0 1px rgba(217,119,6,0.25); }
-.contributor-card .weight-S      { background: #c2410c; color: #fff7ed; }
-.contributor-card .weight-A-plus { background: #d97706; color: #fffbeb; }
-.contributor-card .weight-A      { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
-.contributor-card .weight-B-plus { background: transparent; color: var(--text-muted); border: 1px dashed var(--border); }
-.contributor-card .weight-B      { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.contributor-card .rarity-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 38px; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: 0.7px; font-family: var(--font-mono, ui-monospace, monospace); line-height: 1.5; }
+.contributor-card .rarity-UR { background: linear-gradient(135deg, #f5d06f, #e11d48 52%, #7c3aed); color: #fff; box-shadow: 0 0 0 1px rgba(225,29,72,0.28); }
+.contributor-card .rarity-SSR { background: linear-gradient(135deg, #f59e0b, #b45309); color: #fff7ed; box-shadow: 0 0 0 1px rgba(180,83,9,0.25); }
+.contributor-card .rarity-SR { background: var(--info-soft); color: var(--info); border: 1px solid rgba(59,130,246,0.28); }
+@media (max-width: 640px) {
+  .contributor-list { grid-template-columns: 1fr; }
+  .contributor-card { padding: 12px; gap: 12px; }
+  .contributor-card .avatar { width: 40px; height: 40px; }
+  .contributor-card .meta-top { grid-template-columns: 1fr; }
+  .contributor-card .links { justify-content: flex-start; }
+}
 </style>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
@@ -4866,6 +4875,11 @@ const App = {
       summary: '系统性扫了一遍仓库提了 CRITICAL/HIGH/MEDIUM 15 条修复建议：XSS 转义、shell 注入防护、10MB body 上限、auth 路由顺序、gRPC 双回调保护、LS pool 并发竞态、HTTP/2 frame 16MB 上限、varint BigInt 支持。PR 因改动面过大未直接合并，但其中多项被后续独立重做。',
     },
   ],
+  contributorRarity(weight) {
+    if (weight === 'S+') return 'UR';
+    if (weight === 'S' || weight === 'A+') return 'SSR';
+    return 'SR';
+  },
   loadCredits() {
     const body = document.getElementById('credits-body');
     if (!body) return;
@@ -4874,13 +4888,20 @@ const App = {
         <img class="avatar" src="https://github.com/${this.esc(c.login)}.png?size=128" alt="${this.esc(c.login)}" loading="lazy" onerror="this.style.visibility='hidden'">
         <div class="meta">
           <div class="meta-top">
-            <a class="name" target="_blank" rel="noopener" href="https://github.com/${this.esc(c.login)}">@${this.esc(c.login)}</a>
-            ${c.weight ? `<span class="weight-badge weight-${this.esc(c.weight).replace('+','-plus')}" title="${this.esc(c.weightLabel || '')}">${this.esc(c.weight)}</span>` : ''}
-            <a class="pr-link" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${c.pr}">PR #${c.pr}</a>
-            <span class="merged-at">${this.esc(c.mergedAt)}</span>
+            <div class="identity">
+              <a class="name" target="_blank" rel="noopener" href="https://github.com/${this.esc(c.login)}">@${this.esc(c.login)}</a>
+              ${c.weight ? `<span class="rarity-badge rarity-${this.esc(this.contributorRarity(c.weight))}" title="${this.esc(c.weightLabel || '')}">${this.esc(this.contributorRarity(c.weight))}</span>` : ''}
+            </div>
+            <div class="links">
+              <a class="pr-link" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${c.pr}">PR #${c.pr}</a>
+              <span class="merged-at">${this.esc(c.mergedAt)}</span>
+            </div>
           </div>
           <div class="pr-title">${this.esc(c.title)}</div>
-          <div class="summary">${this.esc(c.summary)}</div>
+          <details class="summary-toggle">
+            <summary>贡献详情</summary>
+            <div class="summary">${this.esc(c.summary)}</div>
+          </details>
         </div>
       </div>`).join('')}</div>`;
   },
