@@ -138,6 +138,9 @@ describe('Anthropic messages request translation', () => {
     assert.deepEqual(extractRequestedJsonKeys([
       { role: 'user', content: 'answer only compact JSON with exact keys readVersion, bashVersion, versionsMatch and no other keys.' },
     ]), ['readVersion', 'bashVersion', 'versionsMatch']);
+    assert.deepEqual(extractRequestedJsonKeys(applyJsonResponseHint([
+      { role: 'user', content: 'answer only compact JSON with exact keys readVersion, bashVersion, versionsMatch and no other keys.' },
+    ])), ['readVersion', 'bashVersion', 'versionsMatch']);
   });
 
   it('adds JSON-only guidance for clients that ask for JSON in text', () => {

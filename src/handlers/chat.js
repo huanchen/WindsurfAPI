@@ -148,9 +148,9 @@ export function extractRequestedJsonKeys(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
-    const text = textFromMessageContent(m.content);
+    const text = textFromMessageContent(m.content).split('\n\n[You MUST respond with valid JSON only.')[0];
     if (!text || /^\s*<tool_result\b/i.test(text)) continue;
-    const match = text.match(/\b(?:exact\s+)?keys?\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
+    const match = text.match(/\b(?:exact\s+)?keys\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
     if (!match) continue;
     return match[1]
       .replace(/\s+(?:and|&)\s+/gi, ',')
