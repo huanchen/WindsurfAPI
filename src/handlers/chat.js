@@ -333,6 +333,18 @@ function isToolSensitiveOpusModel(modelKey = '') {
 // Claude Code is the exception: replaying the full prompt/tools/image
 // history is worse than preserving the exact upstream cascade, so enable
 // a narrow local path.
+// thinking.type can be 'enabled' (Anthropic spec), 'adaptive' (what
+// Claude Code 2.x sonnet defaults to), or any future variant — accept
+// anything that isn't an explicit 'disabled' so the model still gets
+// routed to the -thinking sibling. The previous strict 'enabled' check
+// silently dropped every adaptive request to the non-thinking model.
+export function isThinkingRequested(body) {
+  const thinkingType = body?.thinking?.type;
+  if (thinkingType && thinkingType !== 'disabled') return true;
+  if (body?.reasoning_effort) return true;
+  return false;
+}
+
 export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allowToolReuse = OPUS47_TOOL_EMULATED_REUSE }) {
   if (!useCascade) return false;
   if (!emulateTools) return true;
@@ -814,7 +826,7 @@ export async function handleChatCompletions(body, context = {}) {
   }
 
   const modelKey = resolveModel(reqModel || config.defaultModel);
-  const wantThinking = !!(body.thinking?.type === 'enabled' || body.reasoning_effort);
+  const wantThinking = isThinkingRequested(body);
   let effectiveModelKey = modelKey;
   if (wantThinking && !modelKey.includes('thinking') && getModelInfo(modelKey + '-thinking')) {
     effectiveModelKey = modelKey + '-thinking';

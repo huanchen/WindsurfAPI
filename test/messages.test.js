@@ -144,6 +144,82 @@ describe('Anthropic messages request translation', () => {
     assert.match(out, /does not prove the full file body/);
   });
 
+  it('translates Anthropic output_config.effort into reasoning_effort', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      output_config: { effort: 'high' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.equal(capturedBody.reasoning_effort, 'high');
+  });
+
+  it('translates Anthropic output_config.format json_schema into response_format', async () => {
+    let capturedBody = null;
+    const schema = {
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    };
+    await handleMessages({
+      model: 'claude-haiku-4-5',
+      output_config: { format: { type: 'json_schema', schema } },
+      messages: [{ role: 'user', content: 'extract a title' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: '{"title":"x"}' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.equal(capturedBody.response_format?.type, 'json_schema');
+    assert.deepEqual(capturedBody.response_format.json_schema.schema, schema);
+    assert.equal(capturedBody.response_format.json_schema.strict, true);
+  });
+
+  it('preserves thinking.type=adaptive (Claude Code 2.x sonnet default) when forwarding', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.deepEqual(capturedBody.thinking, { type: 'adaptive' });
+    assert.equal(capturedBody.reasoning_effort, 'high');
+  });
+
   it('detects explicit JSON requests without response_format', () => {
     assert.equal(isExplicitJsonRequested([
       { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldUseCascadeReuse, shouldUseStrictCascadeReuse } from '../src/handlers/chat.js';
+import { isThinkingRequested, shouldUseCascadeReuse, shouldUseStrictCascadeReuse } from '../src/handlers/chat.js';
 
 describe('shouldUseCascadeReuse', () => {
   it('allows reuse for normal Cascade chat turns', () => {
@@ -83,5 +83,42 @@ describe('shouldUseStrictCascadeReuse', () => {
       strict: false,
       allowOpus47Strict: true,
     }), false);
+  });
+});
+
+describe('isThinkingRequested', () => {
+  it('treats explicit enabled type as a thinking request', () => {
+    assert.equal(isThinkingRequested({ thinking: { type: 'enabled' } }), true);
+  });
+
+  // Real Claude Code 2.1.120 sonnet 4.6 traffic always sends adaptive.
+  // The previous strict 'enabled' check missed every one of these and
+  // silently routed thinking-capable requests to the non-thinking sibling.
+  it('treats adaptive type as a thinking request', () => {
+    assert.equal(isThinkingRequested({ thinking: { type: 'adaptive' } }), true);
+  });
+
+  it('treats unknown future thinking types as enabled (forward-compatible)', () => {
+    assert.equal(isThinkingRequested({ thinking: { type: 'whatever_2027' } }), true);
+  });
+
+  it('respects an explicit disabled type', () => {
+    assert.equal(isThinkingRequested({ thinking: { type: 'disabled' } }), false);
+  });
+
+  it('returns false when thinking object lacks a type', () => {
+    assert.equal(isThinkingRequested({ thinking: {} }), false);
+    assert.equal(isThinkingRequested({ thinking: { budget_tokens: 1024 } }), false);
+  });
+
+  it('treats reasoning_effort as a thinking request even without thinking object', () => {
+    assert.equal(isThinkingRequested({ reasoning_effort: 'high' }), true);
+    assert.equal(isThinkingRequested({ reasoning_effort: 'low' }), true);
+  });
+
+  it('returns false for empty or missing body', () => {
+    assert.equal(isThinkingRequested({}), false);
+    assert.equal(isThinkingRequested(null), false);
+    assert.equal(isThinkingRequested(undefined), false);
   });
 });
