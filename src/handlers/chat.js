@@ -143,6 +143,24 @@ function textFromMessageContent(content) {
   return '';
 }
 
+export function extractRequestedJsonKeys(messages) {
+  if (!Array.isArray(messages)) return [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== 'user') continue;
+    const text = textFromMessageContent(m.content);
+    if (!text || /^\s*<tool_result\b/i.test(text)) continue;
+    const match = text.match(/\b(?:exact\s+)?keys?\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
+    if (!match) continue;
+    return match[1]
+      .replace(/\s+(?:and|&)\s+/gi, ',')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function isExplicitJsonRequested(messages) {
   if (!Array.isArray(messages)) return false;
   for (const m of messages) {
@@ -162,6 +180,116 @@ function appendJsonHintToContent(content, hint) {
   if (typeof content === 'string') return content + hint;
   if (Array.isArray(content)) return [...content, { type: 'text', text: hint }];
   return content;
+}
+
+function plainObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function findDeepValue(obj, wanted) {
+  if (!plainObject(obj) && !Array.isArray(obj)) return undefined;
+  const wantedLower = wanted.toLowerCase();
+  const stack = [obj];
+  while (stack.length) {
+    const cur = stack.shift();
+    if (plainObject(cur)) {
+      for (const [k, v] of Object.entries(cur)) {
+        if (k.toLowerCase() === wantedLower) return v;
+        if (plainObject(v) || Array.isArray(v)) stack.push(v);
+      }
+    } else if (Array.isArray(cur)) {
+      for (const v of cur) {
+        if (plainObject(v) || Array.isArray(v)) stack.push(v);
+      }
+    }
+  }
+  return undefined;
+}
+
+function safeJsonParse(text) {
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+function collectToolFacts(messages) {
+  const namesById = new Map();
+  const facts = { byTool: {}, all: [] };
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) namesById.set(tc.id, tc.function?.name || '');
+    }
+    if (m?.role !== 'tool') continue;
+    const toolName = namesById.get(m.tool_call_id) || 'tool';
+    const key = toolName.toLowerCase();
+    const content = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content ?? '');
+    const parsed = safeJsonParse(extractJsonPayload(content));
+    const fact = { toolName, content, parsed };
+    facts.all.push(fact);
+    if (!facts.byTool[key]) facts.byTool[key] = [];
+    facts.byTool[key].push(fact);
+  }
+  return facts;
+}
+
+function valueFromToolFacts(key, facts) {
+  const lower = key.toLowerCase();
+  if (lower === 'versionsmatch' || lower === 'versionmatch') return undefined;
+  const wantsRead = lower.startsWith('read') || lower.includes('read');
+  const wantsBash = lower.startsWith('bash') || lower.includes('bash');
+  const wantsVersion = lower.includes('version');
+  const wantsName = lower.includes('name') || lower.includes('package');
+  const candidates = wantsRead ? (facts.byTool.read || [])
+    : wantsBash ? (facts.byTool.bash || [])
+      : facts.all;
+
+  if (wantsVersion) {
+    for (const f of candidates) {
+      if (plainObject(f.parsed)) {
+        const v = findDeepValue(f.parsed, 'version');
+        if (v !== undefined) return v;
+      }
+      const m = f.content.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/);
+      if (m) return m[0];
+    }
+  }
+  if (wantsName) {
+    for (const f of candidates) {
+      if (plainObject(f.parsed)) {
+        const v = findDeepValue(f.parsed, 'name');
+        if (v !== undefined) return v;
+      }
+    }
+  }
+  if (lower === 'ok') return true;
+  return undefined;
+}
+
+export function stabilizeJsonPayload(text, messages) {
+  const keys = extractRequestedJsonKeys(messages);
+  if (!keys.length) return text;
+  const cleaned = extractJsonPayload(text);
+  const parsed = safeJsonParse(cleaned);
+  if (!plainObject(parsed)) return cleaned;
+  const existingKeys = Object.keys(parsed);
+  if (existingKeys.length === keys.length && keys.every((k, i) => existingKeys[i] === k)) {
+    return cleaned;
+  }
+
+  const facts = collectToolFacts(messages);
+  const out = {};
+  for (const key of keys) {
+    let v = findDeepValue(parsed, key);
+    if (v === undefined) v = valueFromToolFacts(key, facts);
+    out[key] = v === undefined ? null : v;
+  }
+  for (const key of keys) {
+    const lower = key.toLowerCase();
+    if ((lower === 'versionsmatch' || lower === 'versionmatch') && out[key] == null) {
+      const read = out.readVersion ?? out.read_version;
+      const bash = out.bashVersion ?? out.bash_version;
+      if (read != null && bash != null) out[key] = String(read).trim() === String(bash).trim();
+    }
+  }
+  return JSON.stringify(out);
 }
 
 export function applyJsonResponseHint(messages, responseFormat) {
@@ -1166,7 +1294,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     allText = sanitizeText(allText);
     allText = neutralizeCascadeIdentity(allText, model);
     if (wantJson && allText) {
-      allText = extractJsonPayload(allText);
+      allText = stabilizeJsonPayload(allText, messages);
     }
     allThinking = sanitizeText(allThinking);
     if (toolCalls.length) {
@@ -1634,7 +1762,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             // any preamble text, returning raw parseable JSON (or the
             // trimmed original when nothing parses).
             if (wantJson && accText) {
-              const cleaned = extractJsonPayload(accText);
+              const cleaned = stabilizeJsonPayload(accText, messages);
               if (cleaned) {
                 send({ id, object: 'chat.completion.chunk', created, model,
                   choices: [{ index: 0, delta: { content: cleaned }, finish_reason: null }] });

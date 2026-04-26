@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { annotateRiskyReadToolResult, handleMessages } from '../src/handlers/messages.js';
-import { applyJsonResponseHint, isExplicitJsonRequested } from '../src/handlers/chat.js';
+import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
 
 describe('Anthropic messages request translation', () => {
   afterEach(() => {
@@ -134,6 +134,12 @@ describe('Anthropic messages request translation', () => {
     ]), false);
   });
 
+  it('extracts explicitly requested final JSON keys', () => {
+    assert.deepEqual(extractRequestedJsonKeys([
+      { role: 'user', content: 'answer only compact JSON with exact keys readVersion, bashVersion, versionsMatch and no other keys.' },
+    ]), ['readVersion', 'bashVersion', 'versionsMatch']);
+  });
+
   it('adds JSON-only guidance for clients that ask for JSON in text', () => {
     const messages = applyJsonResponseHint([
       { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
@@ -159,5 +165,24 @@ describe('Anthropic messages request translation', () => {
     const toolResult = messages.find(m => m.role === 'tool');
     assert.match(realUser.content, /single parseable JSON object/);
     assert.doesNotMatch(toolResult.content, /single parseable JSON object/);
+  });
+
+  it('projects final JSON onto requested keys using tool results when the model drifts', () => {
+    const messages = [
+      { role: 'user', content: 'After both tool results, answer only compact JSON with exact keys readVersion, bashVersion, versionsMatch and no other keys.' },
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'call_read', type: 'function', function: { name: 'Read', arguments: '{"file_path":"package.json"}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'call_read', content: '{"name":"windsurf-api","version":"2.0.11"}' },
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'call_bash', type: 'function', function: { name: 'Bash', arguments: '{"command":"node -p \\"require(\\\'./package.json\\\').version\\""}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'call_bash', content: '2.0.11' },
+    ];
+
+    assert.equal(
+      stabilizeJsonPayload('{"name":"windsurf-api","version":"2.0.11"}', messages),
+      '{"readVersion":"2.0.11","bashVersion":"2.0.11","versionsMatch":true}',
+    );
   });
 });
