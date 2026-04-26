@@ -14,6 +14,14 @@ const FIREBASE_REFRESH_URL = `https://securetoken.googleapis.com/v1/token?key=${
 const CODEIUM_REGISTER_URL = 'https://api.codeium.com/register_user/';
 const AUTH1_CONNECTIONS_URL = 'https://windsurf.com/_devin-auth/connections';
 const AUTH1_PASSWORD_LOGIN_URL = 'https://windsurf.com/_devin-auth/password/login';
+// 2026-04-26: Windsurf moved the primary email-method probe to a Connect-RPC
+// path under `_backend/...SeatManagementService/CheckUserLoginMethod`. The
+// response is fast and clean (`{userExists,hasPassword}`); the old
+// `/_devin-auth/connections` path is still wired in their bundle but
+// runs on Vercel functions that 504 every few seconds. We use the new
+// endpoint as the primary probe and fall back to the old one only if
+// the new one is unreachable.
+const WINDSURF_CHECK_LOGIN_METHOD_URL = 'https://windsurf.com/_backend/exa.seat_management_pb.SeatManagementService/CheckUserLoginMethod';
 const WINDSURF_SEAT_SERVICE_BASE = 'https://server.self-serve.windsurf.com/exa.seat_management_pb.SeatManagementService';
 const WINDSURF_POST_AUTH_URL = `${WINDSURF_SEAT_SERVICE_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetOneTimeAuthToken`;
@@ -251,6 +259,36 @@ async function fetchAuth1Connections(email, fingerprint, proxy) {
   return res.data || {};
 }
 
+// New primary email-method probe (Windsurf 2026-04-26 migration).
+// Returns the same { method, hasPassword, raw } shape as
+// interpretConnections so call sites are uniform. On reachability failure
+// returns null (caller falls back to /_devin-auth/connections).
+async function fetchCheckUserLoginMethod(email, fingerprint, proxy) {
+  const body = JSON.stringify({ email });
+  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  try {
+    const res = await httpsRequest(
+      WINDSURF_CHECK_LOGIN_METHOD_URL, { method: 'POST', headers }, body, proxy
+    );
+    if (res.status !== 200 || !res.data || typeof res.data !== 'object') {
+      log.warn(`CheckUserLoginMethod non-200 (${res.status}): ${JSON.stringify(res.data || '').slice(0, 120)}`);
+      return null;
+    }
+    if (res.data.userExists === false) {
+      // Caller maps this to "user not found" via interpretConnections{method:null}.
+      return { method: null, hasPassword: false, raw: res.data };
+    }
+    return {
+      method: 'auth1',
+      hasPassword: !!res.data.hasPassword,
+      raw: res.data,
+    };
+  } catch (e) {
+    log.warn(`CheckUserLoginMethod unreachable: ${e.message}`);
+    return null;
+  }
+}
+
 async function registerWithCodeium(token, fingerprint, proxy) {
   const regBody = JSON.stringify({ firebase_id_token: token });
   const regHeaders = buildJsonHeaders(fingerprint, regBody);
@@ -367,16 +405,24 @@ export async function windsurfLogin(email, password, proxy = null) {
   const fingerprint = generateFingerprint();
   log.info(`Windsurf login: ${email} fp=${fingerprint['User-Agent'].slice(0, 40)}... proxy=${proxy?.host || 'none'}`);
 
-  let auth1Connections = null;
-  try {
-    auth1Connections = await fetchAuth1Connections(email, fingerprint, proxy);
-  } catch (err) {
-    log.warn(`Auth1 connections probe failed for ${email}: ${err.message}`);
+  // Probe sequence (per Windsurf 2026-04-26 half-migration):
+  //   1. CheckUserLoginMethod (new Connect-RPC, fast + clean shape)
+  //   2. _devin-auth/connections (old path, slow/flaky but still wired)
+  //   3. fall through to Firebase legacy path
+  let conn = await fetchCheckUserLoginMethod(email, fingerprint, proxy);
+  if (!conn || conn.method === null) {
+    let auth1Connections = null;
+    try {
+      auth1Connections = await fetchAuth1Connections(email, fingerprint, proxy);
+    } catch (err) {
+      log.warn(`Auth1 connections probe failed for ${email}: ${err.message}`);
+    }
+    // interpretConnections handles BOTH the old `{auth_method:{...}}`
+    // and the post-2026-04-26 `{connections:[...]}` shape — Windsurf is
+    // currently serving both depending on which CDN edge you hit.
+    conn = interpretConnections(auth1Connections);
   }
 
-  // Handles both the old `{auth_method:{...}}` and the new `{connections:[...]}`
-  // shape (Windsurf flipped them on 2026-04-26 — see interpretConnections).
-  const conn = interpretConnections(auth1Connections);
   if (conn.method === 'auth1') {
     if (!conn.hasPassword) {
       throw createFriendlyAuthError('Auth1', 'No password set. Please log in with Google or GitHub.');
