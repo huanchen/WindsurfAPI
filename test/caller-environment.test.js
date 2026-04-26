@@ -53,6 +53,17 @@ describe('extractCallerEnvironment', () => {
     assert.match(result, /- Platform: linux/);
   });
 
+  it('lifts Windows CWD from Claude Code 2.1.120 system-reminder form', () => {
+    const messages = [
+      { role: 'user', content: [
+        { type: 'text', text: '<system-reminder>\nAs you answer the user, use this context:\n# currentWorkingDirectory\nCWD: D:\\Project\\WindsurfAPI\n</system-reminder>' },
+        { type: 'text', text: 'Read package.json' },
+      ] },
+    ];
+    const result = extractCallerEnvironment(messages);
+    assert.match(result, /- Working directory: D:\\Project\\WindsurfAPI/);
+  });
+
   it('returns empty string when no env hints are present', () => {
     const messages = [
       { role: 'system', content: 'You are a helpful assistant.' },

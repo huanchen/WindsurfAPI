@@ -284,7 +284,7 @@ export function extractCallerEnvironment(messages) {
   // The capture group is locked to `[/~]…` so we only grab actual-looking
   // paths — "the working directory you choose" or similar abstract prose
   // never has a `/` or `~` in the captured slot and is rejected.
-  const PATH_TAIL = `[\\/~][^\\s\`'"<>\\n.,;)]+`;
+  const PATH_TAIL = `(?:[\\/~]|[A-Za-z]:\\\\)[^\\s\`'"<>\\n.,;)]+`;
   const PATTERNS = [
     ['cwd', new RegExp(
       // Form (a): line-anchored key/value
