@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleMessages } from '../src/handlers/messages.js';
+import { annotateRiskyReadToolResult, handleMessages } from '../src/handlers/messages.js';
 
 describe('Anthropic messages request translation', () => {
   afterEach(() => {
@@ -72,5 +72,55 @@ describe('Anthropic messages request translation', () => {
       assert.equal(result.status, 200);
       assert.deepEqual(capturedBody.tool_choice, testCase.expected);
     }
+  });
+
+  it('annotates risky Read tool_result stubs before Cascade sees them', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [
+        { role: 'user', content: 'review files' },
+        { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: 'big.md' } },
+        ] },
+        { role: 'user', content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_1',
+            is_error: true,
+            content: 'File content (377.3KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.',
+          },
+        ] },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+
+    const toolMsg = capturedBody.messages.find(m => m.role === 'tool');
+    assert.match(toolMsg.content, /does not prove the full file body/);
+    assert.match(toolMsg.content, /offset\/limit/);
+  });
+
+  it('does not annotate normal Read output or non-Read tool results', () => {
+    const normal = '1\t# README\n2\tActual content';
+    assert.equal(
+      annotateRiskyReadToolResult(normal, { toolName: 'Read' }),
+      normal,
+    );
+    const bashStub = 'File content (377.3KB) exceeds maximum allowed size (256KB). Use offset and limit parameters.';
+    assert.equal(
+      annotateRiskyReadToolResult(bashStub, { toolName: 'Bash', isError: true }),
+      bashStub,
+    );
   });
 });
