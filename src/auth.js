@@ -9,13 +9,16 @@
  */
 
 import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
 
 import { join } from 'path';
-const ACCOUNTS_FILE = join(config.dataDir, 'accounts.json');
+// accounts.json lives in the cluster-shared dir so add-account writes from
+// one replica survive future restarts and are visible to every replica.
+// See `src/config.js` (sharedDataDir vs dataDir) and issue #67.
+const ACCOUNTS_FILE = join(config.sharedDataDir || config.dataDir, 'accounts.json');
 
 // ─── Account pool ──────────────────────────────────────────
 
@@ -109,8 +112,59 @@ export function saveAccountsSync() {
   }
 }
 
+// Issue #67 — accounts.json used to live under `dataDir` which became
+// per-replica when REPLICA_ISOLATE=1 shipped (commit 35700bb). Each
+// docker-compose upgrade gets a fresh container HOSTNAME so the previous
+// run's accounts ended up orphaned under a stale `replica-<old>/` subdir.
+// On startup, if the shared accounts.json is missing but one or more
+// replica-local copies exist, union them by apiKey and write into the
+// shared path. Survives multiple stale subdirs across upgrade cycles.
+//
+// Pure-function form is exported so tests can drive it without booting
+// the whole auth module against a real config.
+export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log }) {
+  if (existsSync(accountsFile)) return { migrated: 0, scanned: 0, skipped: true };
+  let entries;
+  try {
+    entries = readdirSync(sharedDir).filter(n => n.startsWith('replica-'));
+  } catch { return { migrated: 0, scanned: 0, skipped: true }; }
+  if (!entries.length) return { migrated: 0, scanned: 0, skipped: true };
+  const merged = new Map();
+  let scanned = 0;
+  for (const entry of entries) {
+    const legacyPath = join(sharedDir, entry, 'accounts.json');
+    if (!existsSync(legacyPath)) continue;
+    scanned++;
+    try {
+      const data = JSON.parse(readFileSync(legacyPath, 'utf-8'));
+      if (!Array.isArray(data)) continue;
+      for (const a of data) {
+        if (a?.apiKey && !merged.has(a.apiKey)) merged.set(a.apiKey, a);
+      }
+    } catch (e) {
+      logger.warn?.(`Account migration: skipped ${legacyPath}: ${e.message}`);
+    }
+  }
+  if (!merged.size) return { migrated: 0, scanned, skipped: false };
+  const tempFile = accountsFile + '.migrate.tmp';
+  try {
+    writeFileSync(tempFile, JSON.stringify([...merged.values()], null, 2));
+    renameSync(tempFile, accountsFile);
+    logger.warn?.(`Migrated ${merged.size} account(s) from ${scanned} replica-* subdir(s) into ${accountsFile} (issue #67)`);
+    return { migrated: merged.size, scanned, skipped: false };
+  } catch (e) {
+    logger.error?.(`Account migration write failed: ${e.message}`);
+    try { unlinkSync(tempFile); } catch {}
+    return { migrated: 0, scanned, skipped: false, error: e.message };
+  }
+}
+
 function loadAccounts() {
   try {
+    migrateReplicaAccountsTo({
+      sharedDir: config.sharedDataDir || config.dataDir,
+      accountsFile: ACCOUNTS_FILE,
+    });
     if (!existsSync(ACCOUNTS_FILE)) return;
     const data = JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf-8'));
     for (const a of data) {

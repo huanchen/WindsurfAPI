@@ -17,7 +17,13 @@ services:
       PORT: 3003
       DATA_DIR: /data
       LS_BINARY_PATH: /opt/windsurf/language_server_linux_x64
-      REPLICA_ISOLATE: 1
+      # REPLICA_ISOLATE=1 puts telemetry under per-container subdirs.
+      # Default off — accounts.json now always lives at the shared
+      # /data/accounts.json regardless of this flag (see src/config.js
+      # sharedDataDir). Set to 1 only if you scale replicas>1 and accept
+      # that runtime-config / model-access / cache / cascade pool stay
+      # replica-local until externalized. See issue #67 / #69.
+      REPLICA_ISOLATE: 0
     # Do not expose ports directly when load balancing
     expose:
       - "3003"
@@ -25,8 +31,13 @@ services:
       - ./.docker-data/data:/data
       - ./.docker-data/opt/windsurf:/opt/windsurf
       - ./.docker-data/tmp/windsurf-workspace:/tmp/windsurf-workspace
+    # Default to a single replica. Each replica keeps its own in-memory
+    # response cache, cascade reuse pool, runtime-config, and model-access
+    # list — those are NOT yet shared. Multi-replica is opt-in:
+    # `docker compose up -d --scale windsurf-api=3` after you've set up
+    # external coordination for those state files. See issue #69.
     deploy:
-      replicas: 3
+      replicas: 1
 
   nginx:
     image: nginx:alpine

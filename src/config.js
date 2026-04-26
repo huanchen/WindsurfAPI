@@ -32,8 +32,16 @@ function loadEnv() {
 
 loadEnv();
 
+// `sharedDataDir` is the cluster-shared root: a single accounts.json lives
+// here so add-account writes from any replica are visible to every replica
+// after restart. `dataDir` is replica-local under REPLICA_ISOLATE=1 and is
+// safe to use for telemetry that does not need cross-replica visibility.
+// See issue #67 — when the two were collapsed into one path, every
+// docker-compose upgrade orphaned the user's accounts.json under a stale
+// `replica-${HOSTNAME}` subdir.
+const sharedDataDir = process.env.DATA_DIR ? resolve(ROOT, process.env.DATA_DIR) : ROOT;
 const dataDir = (() => {
-  let base = process.env.DATA_DIR ? resolve(ROOT, process.env.DATA_DIR) : ROOT;
+  let base = sharedDataDir;
   if (process.env.REPLICA_ISOLATE === '1' && process.env.HOSTNAME) {
     base = join(base, `replica-${process.env.HOSTNAME}`);
   }
@@ -41,6 +49,7 @@ const dataDir = (() => {
 })();
 
 try {
+  mkdirSync(sharedDataDir, { recursive: true });
   mkdirSync(dataDir, { recursive: true });
 } catch {}
 
@@ -48,6 +57,7 @@ export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   apiKey: process.env.API_KEY || '',
   dataDir,
+  sharedDataDir,
 
   codeiumAuthToken: process.env.CODEIUM_AUTH_TOKEN || '',
   codeiumApiKey: process.env.CODEIUM_API_KEY || '',
