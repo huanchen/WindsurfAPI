@@ -21,6 +21,22 @@ describe('resolveModel', () => {
     assert.equal(result, 'claude-opus-4.6');
   });
 
+  // Issue #68 — bare `claude-4.6` (no sonnet/opus split) used to fall through
+  // to silent legacy fallback; the model would self-identify as "Claude 4.5"
+  // because no model name was forwarded upstream. Default to sonnet.
+  it('resolves bare claude-4.6 to sonnet variant', () => {
+    assert.equal(resolveModel('claude-4.6'), 'claude-sonnet-4.6');
+    assert.equal(resolveModel('claude-4.6-thinking'), 'claude-sonnet-4.6-thinking');
+    assert.equal(resolveModel('claude-4.6-1m'), 'claude-sonnet-4.6-1m');
+    assert.equal(resolveModel('claude-4.6-thinking-1m'), 'claude-sonnet-4.6-thinking-1m');
+  });
+
+  it('bare claude-4.6 resolves to a real catalog entry (not silent fallback)', () => {
+    const info = getModelInfo(resolveModel('claude-4.6'));
+    assert.ok(info, 'claude-4.6 must map to a known model');
+    assert.equal(info.modelUid, 'claude-sonnet-4-6');
+  });
+
   it('returns input unchanged for unknown models', () => {
     assert.equal(resolveModel('nonexistent-model-xyz'), 'nonexistent-model-xyz');
   });

@@ -546,6 +546,24 @@ export async function handleChatCompletions(body, context = {}) {
     effectiveModelKey = modelKey + '-thinking';
   }
   const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
+  // Reject unknown models. Without this, chat.js used to fall through to
+  // legacy rawGetChatMessage with modelEnum=0 and modelUid=null, which
+  // upstream silently routed to a default model. Callers saw "I'm Claude 4.5"
+  // when they asked for `claude-4.6` (issue #68), or got blank responses for
+  // typos. Fail fast with the same shape OpenAI uses.
+  if (!modelInfo) {
+    return {
+      status: 400,
+      body: {
+        error: {
+          message: `Unsupported model: ${reqModel || config.defaultModel}`,
+          type: 'invalid_request_error',
+          param: 'model',
+          code: 'model_not_found',
+        },
+      },
+    };
+  }
   // Return the user's original model name in response.model / response headers
   // so external test harnesses (e.g. hvoy.ai "model signature" check) see
   // exactly what they sent, not a Windsurf-internal alias like

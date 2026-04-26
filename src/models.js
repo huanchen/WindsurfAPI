@@ -183,6 +183,15 @@ _lookup.set('MODEL_CLAUDE_4_5_SONNET_THINKING', 'claude-4.5-sonnet-thinking');
 // UID-based aliases not already covered by modelUid field
 _lookup.set('claude-sonnet-4-6-1m', 'claude-sonnet-4.6-1m');
 _lookup.set('claude-sonnet-4-6-thinking-1m', 'claude-sonnet-4.6-thinking-1m');
+// Bare `claude-4.6` (no explicit sonnet/opus) — issue #68. Without these,
+// resolveModel falls through to the raw string, getModelInfo returns null,
+// and chat.js silently routes to legacy rawGetChatMessage with no model
+// name, so the upstream falls back to a default model whose self-knowledge
+// is "I'm Claude 4.5". Default the bare alias to sonnet (more common).
+_lookup.set('claude-4.6', 'claude-sonnet-4.6');
+_lookup.set('claude-4.6-thinking', 'claude-sonnet-4.6-thinking');
+_lookup.set('claude-4.6-1m', 'claude-sonnet-4.6-1m');
+_lookup.set('claude-4.6-thinking-1m', 'claude-sonnet-4.6-thinking-1m');
 _lookup.set('gpt-5-4-none', 'gpt-5.4-none');
 _lookup.set('gpt-5-4-low', 'gpt-5.4-low');
 _lookup.set('gpt-5-4-medium', 'gpt-5.4-medium');
