@@ -143,7 +143,7 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     // No fenced ```json blocks (schemas would live inside these)
     assert.ok(!/```json/i.test(preamble), 'preamble must not contain fenced json schema blocks');
     // Stays well under a "system prompt wall of text" size even with many tools
-    assert.ok(preamble.length < 512, `preamble must stay compact (<512 chars); got ${preamble.length}`);
+    assert.ok(preamble.length < 640, `preamble must stay compact (<640 chars); got ${preamble.length}`);
   });
 
   it('still describes the <tool_call> protocol and lists every tool name', () => {
@@ -151,6 +151,8 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     for (const t of manyTools) {
       assert.ok(preamble.includes(t.function.name), `must include function name ${t.function.name}`);
     }
+    assert.ok(preamble.includes('arguments.command'), 'must carry the short Bash argument hint');
+    assert.ok(preamble.includes('arguments.file_path'), 'must carry the short Read argument hint');
   });
 
   it('normalizeMessagesForCascade prepends preamble to last user message without jailbreak or system-prompt shape', () => {
@@ -180,7 +182,9 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     assert.match(full, /Preserve quotes, flags, pipes, redirections/);
     assert.match(full, /Read: use "file_path" exactly/);
     assert.ok(!preamble.includes('Tool argument fidelity rules:'),
-      'user-message fallback must remain compact and schema-free');
+      'user-message fallback must not include the long proto-only rule block');
+    assert.ok(preamble.includes('arguments.command'),
+      'user-message fallback should include the compact Bash argument hint');
   });
 });
 

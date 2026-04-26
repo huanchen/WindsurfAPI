@@ -65,7 +65,11 @@ export function buildToolPreamble(tools) {
   // "User-message-level fallback preamble" comment block at the top of
   // this module for the injection-shape rationale. Full schemas live
   // in the proto-level tool_calling_section override.
-  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: <tool_call>{"name":"...","arguments":{...}}</tool_call>. Otherwise answer directly in plain text. After the last <tool_call>, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
+  const hints = [];
+  const lowerNames = new Set(names.map(n => n.toLowerCase()));
+  if (lowerNames.has('bash')) hints.push('For Bash, put the complete shell command in arguments.command.');
+  if (lowerNames.has('read')) hints.push('For Read, put the exact path in arguments.file_path.');
+  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: <tool_call>{"name":"...","arguments":{...}}</tool_call>. ${hints.join(' ')} Otherwise answer directly in plain text. After the last <tool_call>, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
 }
 
 /**
