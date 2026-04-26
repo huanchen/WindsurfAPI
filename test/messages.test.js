@@ -141,6 +141,9 @@ describe('Anthropic messages request translation', () => {
 
     assert.match(messages[0].content, /Respond with valid JSON only/);
     assert.match(messages.at(-1).content, /single parseable JSON object/);
+    assert.match(messages.at(-1).content, /Preserve the exact JSON field names requested/);
+    assert.match(messages.at(-1).content, /do not add extra fields/);
+    assert.match(messages.at(-1).content, /copying the full tool result/);
   });
 
   it('keeps JSON-only guidance on the latest real user turn when the current turn is a tool_result', () => {

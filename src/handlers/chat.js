@@ -165,7 +165,7 @@ function appendJsonHintToContent(content, hint) {
 }
 
 export function applyJsonResponseHint(messages, responseFormat) {
-  let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object. If tool results contain the requested values, put those values into JSON fields rather than describing them in prose.';
+  let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object. Preserve the exact JSON field names requested by the user, and do not add extra fields when an exact key set is requested. If tool results contain the requested values, put only those values into JSON fields rather than describing them in prose or copying the full tool result.';
   if (responseFormat?.type === 'json_schema' && responseFormat?.json_schema?.schema) {
     jsonHint += ' Conform to this JSON Schema:\n' + JSON.stringify(responseFormat.json_schema.schema);
   }
