@@ -192,10 +192,62 @@ function createFriendlyAuthError(prefix, detail, fallback = 'ERR_LOGIN_FAILED') 
   return err;
 }
 
+// 5xx retry helper: Windsurf 的 _devin-auth/* 端点跑在 Vercel functions
+// 上，时不时 504 / 503 (FUNCTION_INVOCATION_TIMEOUT)。一次 dispatch 的
+// 暂时失败不该让用户看到 "登录失败"，所以对 5xx 加退避重试 (max 3 次)。
+// 4xx 和 200 直接返回不重试。
+async function httpsRequestRetrying(url, opts, postData, proxy, label = 'request') {
+  let lastErr = null;
+  const delays = [0, 2000, 5000];
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i]) await new Promise(r => setTimeout(r, delays[i]));
+    try {
+      const res = await httpsRequest(url, opts, postData, proxy);
+      if (res.status >= 500 && res.status < 600) {
+        log.warn(`${label} upstream ${res.status} (attempt ${i + 1}/${delays.length})`);
+        lastErr = new Error(`Windsurf upstream ${res.status}: ${JSON.stringify(res.data || '').slice(0, 120)}`);
+        continue;
+      }
+      return res;
+    } catch (e) {
+      log.warn(`${label} threw: ${e.message} (attempt ${i + 1}/${delays.length})`);
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error(`${label} failed after retries`);
+}
+
+// Windsurf 在 2026-04-26 把 /_devin-auth/connections 的响应从
+//   { auth_method: { method: 'auth1', has_password: bool } }
+// 换成
+//   { connections: [{ id, type, enabled, client_id }, ...] }
+// 其中 type:'email' + enabled:true = 该账号支持邮箱密码登录。
+// 这个函数兼容新旧两种形态，返回统一的 { method, hasPassword, raw }。
+function interpretConnections(data) {
+  if (data && Array.isArray(data.connections)) {
+    const email = data.connections.find(c => c && c.type === 'email');
+    return {
+      method: 'auth1',
+      hasPassword: !!(email && email.enabled),
+      raw: data,
+    };
+  }
+  if (data && data.auth_method) {
+    return {
+      method: data.auth_method.method || null,
+      hasPassword: data.auth_method.has_password !== false,
+      raw: data,
+    };
+  }
+  return { method: null, hasPassword: false, raw: data || {} };
+}
+
 async function fetchAuth1Connections(email, fingerprint, proxy) {
   const body = JSON.stringify({ product: 'windsurf', email });
   const headers = buildJsonHeaders(fingerprint, body);
-  const res = await httpsRequest(AUTH1_CONNECTIONS_URL, { method: 'POST', headers }, body, proxy);
+  const res = await httpsRequestRetrying(
+    AUTH1_CONNECTIONS_URL, { method: 'POST', headers }, body, proxy, 'Auth1 connections'
+  );
   return res.data || {};
 }
 
@@ -214,10 +266,20 @@ async function registerWithCodeium(token, fingerprint, proxy) {
 async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   const loginBody = JSON.stringify({ email, password });
   const loginHeaders = buildJsonHeaders(fingerprint, loginBody);
-  const loginRes = await httpsRequest(AUTH1_PASSWORD_LOGIN_URL, { method: 'POST', headers: loginHeaders }, loginBody, proxy);
+  const loginRes = await httpsRequestRetrying(
+    AUTH1_PASSWORD_LOGIN_URL, { method: 'POST', headers: loginHeaders }, loginBody, proxy, 'Auth1 password/login'
+  );
 
-  if (loginRes.status >= 400 || loginRes.data?.detail) {
-    throw createFriendlyAuthError('Auth1', loginRes.data?.detail, 'ERR_LOGIN_FAILED');
+  // Pydantic v2 returns `detail: [...]` for validation errors; the older
+  // shape was `detail: 'message'`. Normalize both for the friendly-error
+  // mapper so we don't blow up trying to .toLowerCase an array.
+  const rawDetail = loginRes.data?.detail;
+  const detailMsg = Array.isArray(rawDetail)
+    ? rawDetail.map(d => d?.msg || d?.type || JSON.stringify(d)).join('; ')
+    : (typeof rawDetail === 'string' ? rawDetail : '');
+
+  if (loginRes.status >= 400 || detailMsg) {
+    throw createFriendlyAuthError('Auth1', detailMsg, 'ERR_LOGIN_FAILED');
   }
 
   const auth1Token = loginRes.data?.token;
@@ -312,9 +374,11 @@ export async function windsurfLogin(email, password, proxy = null) {
     log.warn(`Auth1 connections probe failed for ${email}: ${err.message}`);
   }
 
-  const auth1Method = auth1Connections?.auth_method?.method;
-  if (auth1Method === 'auth1') {
-    if (auth1Connections?.auth_method?.has_password === false) {
+  // Handles both the old `{auth_method:{...}}` and the new `{connections:[...]}`
+  // shape (Windsurf flipped them on 2026-04-26 — see interpretConnections).
+  const conn = interpretConnections(auth1Connections);
+  if (conn.method === 'auth1') {
+    if (!conn.hasPassword) {
       throw createFriendlyAuthError('Auth1', 'No password set. Please log in with Google or GitHub.');
     }
     return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
