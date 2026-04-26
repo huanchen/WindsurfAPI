@@ -831,6 +831,9 @@ export async function handleChatCompletions(body, context = {}) {
   if (wantThinking && !modelKey.includes('thinking') && getModelInfo(modelKey + '-thinking')) {
     effectiveModelKey = modelKey + '-thinking';
   }
+  if (effectiveModelKey !== modelKey) {
+    log.info(`Chat[${reqId}]: routed ${modelKey} -> ${effectiveModelKey} (wantThinking=${wantThinking})`);
+  }
   const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
   // Reject unknown models. Without this, chat.js used to fall through to
   // legacy rawGetChatMessage with modelEnum=0 and modelUid=null, which
