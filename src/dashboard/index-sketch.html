@@ -1,0 +1,3242 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WindsurfAPI · Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Caveat:wght@400..700&family=Kalam:wght@300;400;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────
+   WindsurfAPI · Wireframe Console
+   Tiempos-ish serif × handwritten sketch
+   ───────────────────────────────────────────── */
+
+:root[data-theme="light"] {
+  --paper:        #f4efe6;
+  --paper-2:      #ece5d6;
+  --paper-3:      #e2d9c4;
+  --ink:          #161412;
+  --ink-2:        #2b2722;
+  --ink-3:        #4a4339;
+  --ink-mute:     #7a6f5f;
+  --ink-dim:      #a39780;
+  --rule:         #2b2722;
+  --rule-soft:    #5b5247;
+  --rule-faint:   #b8ad95;
+  --accent:       #c33b1f;          /* red ink */
+  --accent-soft:  rgba(195,59,31,.08);
+  --highlight:    #f4d35e;          /* highlighter yellow */
+  --good:         #3a7a3a;
+  --warn:         #b87a1a;
+  --error:        #b53224;
+  --info:         #2a5a8c;
+  --grain:        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .12 0 0 0 0 .1 0 0 0 0 .08 0 0 0 .08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+:root[data-theme="dark"] {
+  --paper:        #14130f;
+  --paper-2:      #1a1815;
+  --paper-3:      #221f1a;
+  --ink:          #f0e8d8;
+  --ink-2:        #e1d8c5;
+  --ink-3:        #c8bda5;
+  --ink-mute:     #8a8068;
+  --ink-dim:      #5e5645;
+  --rule:         #d6cbb1;
+  --rule-soft:    #8a8068;
+  --rule-faint:   #4a4232;
+  --accent:       #ff6b4a;
+  --accent-soft:  rgba(255,107,74,.12);
+  --highlight:    #d4a72c;
+  --good:         #7fc77f;
+  --warn:         #e0a85a;
+  --error:        #ff7a6a;
+  --info:         #80b3e6;
+  --grain:        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .9 0 0 0 0 .85 0 0 0 0 .75 0 0 0 .05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: var(--paper);
+  background-image: var(--grain);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  min-height: 100vh;
+  letter-spacing: .005em;
+}
+
+/* Selection */
+::selection { background: var(--highlight); color: var(--ink); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule-faint); border-radius: 0; border: 3px solid var(--paper); }
+::-webkit-scrollbar-thumb:hover { background: var(--rule-soft); }
+
+a { color: var(--accent); text-decoration: underline; text-decoration-style: wavy; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-style: solid; }
+
+code, .mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ─── Type system ──────────────────────────── */
+.serif      { font-family: 'Fraunces', 'Tiempos Headline', Georgia, serif; font-variation-settings: 'opsz' 36, 'SOFT' 50, 'WONK' 0; letter-spacing: -.018em; }
+.serif-italic { font-family: 'Fraunces', Georgia, serif; font-style: italic; font-variation-settings: 'opsz' 36, 'SOFT' 100, 'WONK' 1; }
+.handwritten { font-family: 'Caveat', 'Kalam', cursive; letter-spacing: .01em; }
+.label-hand { font-family: 'Kalam', 'Caveat', cursive; font-weight: 400; letter-spacing: .02em; }
+
+/* ─── Hand-drawn box (SVG-rendered border) ─── */
+.box {
+  position: relative;
+  background: var(--paper-2);
+  padding: 22px 24px;
+}
+.box::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: var(--box-svg);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.box > * { position: relative; z-index: 2; }
+
+/* Reusable wobbly border drawn by inline SVG via data-uri.
+   Light & dark themes pick the right ink via currentColor on the svg. */
+
+/* Simpler: dashed wobble borders using SVG filter `feTurbulence` displacement on a rect. */
+.wbox {
+  position: relative;
+  background: var(--paper-2);
+}
+.wbox-fill { background: var(--paper-2); }
+.wbox > svg.wbox-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+  display: block;
+}
+.wbox > .wbox-inner {
+  position: relative;
+  padding: 22px 24px;
+  z-index: 2;
+}
+
+/* ─── Sidebar ──────────────────────────────── */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--paper);
+  border-right: 1px solid var(--rule-faint);
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  background-image:
+    linear-gradient(to right, transparent calc(100% - 1px), var(--rule-faint) calc(100% - 1px)),
+    var(--grain);
+}
+
+.sidebar .brand {
+  padding: 24px 22px 18px;
+  position: relative;
+}
+.sidebar .brand-row {
+  display: flex; align-items: baseline; gap: 8px;
+}
+.sidebar .brand-mark {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 28px;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+  letter-spacing: -.04em;
+  line-height: 1;
+}
+.sidebar .brand-mark .amp { color: var(--accent); font-style: italic; }
+.sidebar .brand-tag {
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  color: var(--ink-mute);
+  margin-left: 4px;
+  transform: rotate(-3deg);
+  display: inline-block;
+}
+.sidebar .brand-rule {
+  height: 12px; margin-top: 14px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'><path d='M2 6 Q 18 2, 35 7 T 70 5 T 105 8 T 140 4 T 175 7 T 198 6' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: var(--rule-soft);
+  filter: contrast(1);
+}
+
+.sidebar nav { flex: 1; padding: 8px 14px; overflow-y: auto; }
+.sidebar .nav-group { margin-bottom: 22px; }
+.sidebar .nav-group-label {
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  color: var(--ink-mute);
+  padding: 4px 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sidebar .nav-group-label::after {
+  content: '';
+  flex: 1;
+  height: 4px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 4' preserveAspectRatio='none'><path d='M2 2 Q 10 0, 20 2 T 40 2 T 60 2 T 80 2 T 98 2' fill='none' stroke='currentColor' stroke-width='1' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: var(--rule-faint);
+  margin-left: 4px;
+}
+
+.sidebar nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  position: relative;
+  border-radius: 0;
+  transition: color .15s, background .15s;
+  margin-bottom: 1px;
+}
+.sidebar nav a:hover {
+  color: var(--ink);
+  background: var(--paper-2);
+}
+.sidebar nav a.active {
+  color: var(--ink);
+  background: var(--paper-3);
+}
+.sidebar nav a.active::before {
+  content: '→';
+  position: absolute;
+  left: -6px;
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--accent);
+  line-height: 1;
+}
+.sidebar nav a svg { width: 16px; height: 16px; stroke-width: 1.5; flex-shrink: 0; opacity: .8; }
+.sidebar nav a .nav-pill {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--rule-faint);
+  color: var(--ink-mute);
+}
+
+.sidebar .footer {
+  padding: 14px 22px;
+  border-top: 1px solid var(--rule-faint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.sidebar .footer .ver { font-family: 'JetBrains Mono', monospace; }
+.theme-toggle, .lang-toggle {
+  background: transparent;
+  border: 1px solid var(--rule-faint);
+  color: var(--ink-2);
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.theme-toggle:hover, .lang-toggle:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* ─── Main ─────────────────────────────────── */
+.main {
+  margin-left: 240px;
+  flex: 1;
+  padding: 32px 40px 80px;
+  min-height: 100vh;
+  max-width: 1500px;
+  position: relative;
+}
+
+/* Decorative margin line (notebook feel) */
+.main::before {
+  content: '';
+  position: absolute;
+  left: 26px;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--rule-faint) 6%, var(--rule-faint) 94%, transparent);
+  opacity: .5;
+  pointer-events: none;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+  padding-bottom: 18px;
+  border-bottom: 1.5px solid var(--ink);
+  position: relative;
+}
+.page-header::after {
+  /* second wobble line for "double rule" feel */
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -5px;
+  height: 6px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 6' preserveAspectRatio='none'><path d='M2 3 Q 30 1, 60 3 T 120 3 T 180 3 T 240 3 T 300 3 T 360 3 T 398 3' fill='none' stroke='currentColor' stroke-width='1' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: var(--rule-soft);
+  pointer-events: none;
+}
+.page-num {
+  font-family: 'Caveat', cursive;
+  font-size: 22px;
+  color: var(--accent);
+  display: inline-block;
+  transform: rotate(-4deg);
+  margin-right: 8px;
+}
+.page-title {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 96, 'SOFT' 80, 'WONK' 1;
+  font-weight: 500;
+  font-size: 44px;
+  letter-spacing: -.025em;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.page-title .em {
+  font-style: italic;
+  color: var(--accent);
+  font-variation-settings: 'opsz' 96, 'SOFT' 100, 'WONK' 1;
+}
+.page-subtitle {
+  font-family: 'Caveat', cursive;
+  font-size: 20px;
+  color: var(--ink-mute);
+  margin-top: 6px;
+}
+.page-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-mute);
+  text-align: right;
+}
+.page-meta b { color: var(--ink); font-weight: 500; }
+.page-meta .stamp {
+  display: inline-block;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  padding: 2px 10px;
+  font-family: 'Caveat', cursive;
+  font-size: 16px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  transform: rotate(-2deg);
+  margin-top: 6px;
+}
+
+.panel { display: none; animation: fadeIn .25s ease; }
+.panel.active { display: block; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Section ──────────────────────────────── */
+.section {
+  position: relative;
+  margin-bottom: 28px;
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--rule-soft);
+}
+.section-title {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 60, 'SOFT' 100, 'WONK' 1;
+  font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -.015em;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.section-title .num {
+  font-family: 'Caveat', cursive;
+  font-style: normal;
+  color: var(--accent);
+  font-size: 18px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  width: 26px; height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.section-desc {
+  font-size: 13px;
+  color: var(--ink-mute);
+  margin-top: 4px;
+  max-width: 60ch;
+}
+.section-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Sketch frame around content */
+.frame {
+  position: relative;
+  background: var(--paper-2);
+  padding: 20px 22px;
+}
+.frame::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid var(--ink);
+  pointer-events: none;
+  /* Slight rotation feels off — instead use a doubled shadow border */
+}
+.frame::after {
+  content: '';
+  position: absolute;
+  inset: 4px -4px -4px 4px;
+  border: 1px solid var(--rule-soft);
+  pointer-events: none;
+  z-index: 0;
+}
+.frame > * { position: relative; z-index: 1; }
+
+.frame.tight { padding: 0; }
+.frame-head {
+  padding: 14px 20px;
+  border-bottom: 1px dashed var(--rule-soft);
+  background: var(--paper-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.frame-head .ft {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 16px;
+  font-variation-settings: 'opsz' 36, 'WONK' 1;
+}
+.frame-body { padding: 18px 20px; }
+.frame-body.tight { padding: 0; }
+
+/* ─── Cards / Stats grid ───────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0;
+  margin-bottom: 28px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-2);
+}
+.metric {
+  padding: 18px 20px;
+  border-right: 1px dashed var(--rule-soft);
+  border-bottom: 1px dashed var(--rule-soft);
+  position: relative;
+  background: var(--paper-2);
+  transition: background .15s;
+}
+.metric:hover { background: var(--paper-3); }
+.metric .m-label {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.metric .m-icon {
+  width: 18px; height: 18px;
+  opacity: .7;
+}
+.metric .m-value {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 96, 'SOFT' 100, 'WONK' 1;
+  font-weight: 500;
+  font-size: 38px;
+  letter-spacing: -.03em;
+  line-height: 1.1;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+.metric .m-value.italic { font-style: italic; color: var(--accent); }
+.metric .m-sub {
+  font-size: 12px;
+  color: var(--ink-mute);
+  margin-top: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.metric .m-spark {
+  position: absolute;
+  right: 14px; top: 16px;
+  width: 64px; height: 26px;
+  opacity: .7;
+}
+.metric.accent .m-value { color: var(--accent); font-style: italic; }
+.metric.good .m-value { color: var(--good); }
+.metric.warn .m-value { color: var(--warn); }
+.metric.error .m-value { color: var(--error); }
+
+/* ─── Buttons ──────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  cursor: pointer;
+  transition: all .12s;
+  white-space: nowrap;
+  line-height: 1.2;
+  position: relative;
+  border-radius: 0;
+}
+.btn::after {
+  /* sketchy double shadow */
+  content: '';
+  position: absolute;
+  inset: 2px -3px -3px 2px;
+  border: 1px solid var(--rule-soft);
+  pointer-events: none;
+  z-index: -1;
+  transition: inset .12s;
+}
+.btn:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper);
+}
+.btn:hover:not(:disabled)::after { inset: 3px -4px -4px 3px; }
+.btn:active:not(:disabled) { transform: translate(1px, 1px); }
+.btn:active:not(:disabled)::after { inset: 1px -2px -2px 1px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn svg { width: 14px; height: 14px; stroke-width: 1.5; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-primary:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); }
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--rule-faint);
+  color: var(--ink-2);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--paper-3);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.btn-ghost::after { display: none; }
+
+.btn-danger { background: var(--error); border-color: var(--error); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); }
+
+.btn-good { background: var(--good); border-color: var(--good); color: #fff; }
+.btn-good:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-xs { padding: 2px 8px; font-size: 11px; }
+.btn-xs::after, .btn-sm::after { inset: 1px -2px -2px 1px; }
+.btn-icon { padding: 6px; }
+
+.btn-group { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+
+.btn.active, .btn.active:hover {
+  background: var(--ink); color: var(--paper);
+}
+
+/* ─── Form Controls ────────────────────────── */
+.input, .select, .textarea {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  background: var(--paper);
+  border: 1.5px solid var(--rule-soft);
+  border-bottom-style: solid;
+  color: var(--ink);
+  outline: none;
+  transition: all .12s;
+  line-height: 1.4;
+  border-radius: 0;
+}
+.input:hover, .select:hover, .textarea:hover { border-color: var(--ink-3); }
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--accent);
+  background: var(--paper-2);
+}
+.input::placeholder, .textarea::placeholder { color: var(--ink-dim); font-style: italic; font-family: 'Caveat', cursive; font-size: 16px; }
+
+/* underline-only variant (more sketch-y) */
+.input.underline {
+  border: none;
+  border-bottom: 1.5px solid var(--rule-soft);
+  background: transparent;
+  padding: 6px 2px;
+}
+.input.underline:focus { border-bottom-color: var(--accent); background: transparent; }
+
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a6f5f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+.select option { background: var(--paper); color: var(--ink); }
+
+.field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.field-label {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  color: var(--ink-2);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-label::before {
+  content: '↳';
+  color: var(--accent);
+  opacity: .7;
+}
+.field-hint { font-size: 11px; color: var(--ink-mute); font-style: italic; }
+.field-row {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+.field-row-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+/* Checkbox — hand-drawn box */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-2);
+  user-select: none;
+}
+.checkbox input { position: absolute; opacity: 0; pointer-events: none; }
+.checkbox .box-mark {
+  width: 16px; height: 16px;
+  border: 1.5px solid var(--ink-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  flex-shrink: 0;
+  position: relative;
+}
+.checkbox input:checked + .box-mark::after {
+  content: '✓';
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--accent);
+  line-height: 1;
+  transform: translate(0, -1px);
+}
+.checkbox:hover .box-mark { border-color: var(--accent); }
+
+/* Switch — toggle drawn as flipping ink dot */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 46px; height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch-slider {
+  position: absolute; inset: 0;
+  background: var(--paper);
+  border: 1.5px solid var(--ink-3);
+  transition: .2s;
+}
+.switch-slider::before {
+  content: ''; position: absolute;
+  height: 14px; width: 14px;
+  left: 2px; top: 2px;
+  background: var(--ink-3);
+  transition: .2s;
+}
+.switch input:checked + .switch-slider {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translateX(22px);
+  background: var(--accent);
+}
+
+/* Segmented (tabs) */
+.segmented {
+  display: inline-flex;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+}
+.segmented label {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  border-right: 1px solid var(--rule-soft);
+  position: relative;
+}
+.segmented label:last-child { border-right: none; }
+.segmented label input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented label:has(input:checked) {
+  background: var(--ink);
+  color: var(--paper);
+}
+.segmented label:hover:not(:has(input:checked)) { background: var(--paper-3); }
+
+/* ─── Tables ───────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  background: var(--paper);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+thead th {
+  text-align: left;
+  padding: 10px 14px;
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--paper-3);
+  border-bottom: 1.5px solid var(--ink);
+  white-space: nowrap;
+  letter-spacing: .01em;
+}
+tbody td {
+  padding: 11px 14px;
+  border-bottom: 1px dashed var(--rule-soft);
+  vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { transition: background .1s; }
+tbody tr:hover td { background: var(--paper-3); }
+.empty-row td {
+  text-align: center;
+  color: var(--ink-mute);
+  padding: 36px 16px;
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  font-style: italic;
+}
+
+/* Expand chevron */
+.expand-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border: 1px dashed var(--rule-soft);
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: all .15s;
+  font-family: 'Caveat', cursive;
+  font-size: 14px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.expand-chev:hover { color: var(--accent); border-color: var(--accent); }
+.expand-chev.open { color: var(--accent); border-style: solid; transform: rotate(90deg); }
+
+.detail-row > td {
+  padding: 0 !important;
+  background: var(--paper-3) !important;
+  border-bottom: 1.5px solid var(--ink) !important;
+}
+.detail-wrap { padding: 22px 28px; }
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+@media (max-width: 1100px) { .detail-grid { grid-template-columns: 1fr; } }
+.detail-card {
+  background: var(--paper-2);
+  border: 1.5px solid var(--ink);
+  padding: 14px 16px;
+  position: relative;
+}
+.detail-card::after {
+  content: '';
+  position: absolute;
+  inset: 3px -3px -3px 3px;
+  border: 1px solid var(--rule-soft);
+  z-index: -1;
+}
+.detail-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 36, 'WONK' 1;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 16px;
+  color: var(--ink);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--rule-soft);
+}
+.detail-card-head .num-circle {
+  font-family: 'Caveat', cursive;
+  font-style: normal;
+  color: var(--accent);
+  font-size: 14px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  width: 22px; height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.detail-kv {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 5px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.detail-kv > .k { color: var(--ink-mute); font-family: 'Caveat', cursive; font-size: 15px; }
+.detail-kv > .v { color: var(--ink); font-feature-settings: 'tnum' 1; }
+.detail-kv code { font-size: 11px; padding: 1px 5px; background: var(--paper); border: 1px solid var(--rule-faint); }
+
+/* Progress bar — pen scratch */
+.bar {
+  height: 10px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  position: relative;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background-image: repeating-linear-gradient(45deg, var(--accent), var(--accent) 4px, var(--accent-soft) 4px, var(--accent-soft) 7px);
+  transition: width .6s cubic-bezier(.2,.8,.2,1);
+}
+.bar-fill.good {
+  background-image: repeating-linear-gradient(45deg, var(--good), var(--good) 4px, transparent 4px, transparent 7px);
+}
+.bar-fill.warn {
+  background-image: repeating-linear-gradient(45deg, var(--warn), var(--warn) 4px, transparent 4px, transparent 7px);
+}
+.bar-fill.error {
+  background-image: repeating-linear-gradient(45deg, var(--error), var(--error) 4px, transparent 4px, transparent 7px);
+}
+
+.detail-bar {
+  display: grid;
+  grid-template-columns: 60px 1fr 50px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.detail-bar .b-label { color: var(--ink-mute); font-family: 'Caveat', cursive; font-size: 15px; }
+.detail-bar .b-pct { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-align: right; font-weight: 600; }
+.detail-bar .b-reset {
+  grid-column: 2 / 4;
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+/* ─── Badges ───────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  font-family: 'Caveat', cursive;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  border: 1.2px solid currentColor;
+  background: var(--paper);
+  border-radius: 0;
+}
+.badge::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.badge.active, .badge.running, .badge.success { color: var(--good); }
+.badge.error, .badge.stopped { color: var(--error); }
+.badge.disabled, .badge.muted { color: var(--ink-mute); }
+.badge.warn { color: var(--warn); }
+.badge.info, .badge.pro { color: var(--info); }
+.badge.no-dot::before { display: none; }
+
+/* Tier */
+.tier {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 10px;
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'WONK' 1;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  cursor: pointer;
+}
+.tier.pro { background: var(--ink); color: var(--paper); }
+.tier.free { background: transparent; color: var(--info); border: 1.2px solid var(--info); }
+.tier.expired { background: transparent; color: var(--error); border: 1.2px solid var(--error); }
+.tier.unknown { background: transparent; color: var(--ink-mute); border: 1.2px dashed var(--rule-soft); }
+
+/* ─── Login overlay ────────────────────────── */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--paper);
+  background-image: var(--grain);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.login-box {
+  background: var(--paper-2);
+  border: 2px solid var(--ink);
+  padding: 40px 36px;
+  width: 400px;
+  position: relative;
+}
+.login-box::after {
+  content: '';
+  position: absolute;
+  inset: 6px -6px -6px 6px;
+  border: 1px solid var(--rule-soft);
+  z-index: -1;
+}
+.login-box .login-mark {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+  font-weight: 500;
+  font-size: 56px;
+  letter-spacing: -.04em;
+  text-align: center;
+  margin-bottom: 4px;
+  line-height: 1;
+}
+.login-box .login-mark .em { font-style: italic; color: var(--accent); }
+.login-box .login-tag {
+  font-family: 'Caveat', cursive;
+  font-size: 22px;
+  color: var(--ink-mute);
+  text-align: center;
+  margin-bottom: 30px;
+  transform: rotate(-2deg);
+}
+.login-box .input { margin-bottom: 16px; }
+.login-box .btn { width: 100%; padding: 11px; font-weight: 600; font-size: 14px; }
+
+/* ─── Toast ────────────────────────────────── */
+.toast-stack {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  z-index: 9999;
+  pointer-events: none;
+}
+.toast {
+  padding: 12px 16px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  font-size: 13px;
+  max-width: 380px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: slideIn .25s ease;
+  pointer-events: auto;
+  position: relative;
+  font-family: inherit;
+}
+.toast::after {
+  content: '';
+  position: absolute;
+  inset: 3px -3px -3px 3px;
+  border: 1px solid var(--rule-soft);
+  z-index: -1;
+}
+.toast.success { border-left: 4px solid var(--good); }
+.toast.error { border-left: 4px solid var(--error); }
+.toast.info { border-left: 4px solid var(--info); }
+.toast .toast-icon {
+  font-family: 'Caveat', cursive;
+  font-size: 22px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.toast.success .toast-icon { color: var(--good); }
+.toast.error .toast-icon { color: var(--error); }
+.toast.info .toast-icon { color: var(--info); }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Modal ────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn .15s ease;
+}
+.modal {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  width: 90%;
+  max-width: 460px;
+  position: relative;
+  animation: modalIn .2s cubic-bezier(.16,1,.3,1);
+}
+.modal::after {
+  content: '';
+  position: absolute;
+  inset: 6px -6px -6px 6px;
+  border: 1px solid var(--rule-soft);
+  z-index: -1;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.modal-header { padding: 22px 26px 10px; }
+.modal-title {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'opsz' 36, 'WONK' 1;
+  font-weight: 500;
+  font-size: 22px;
+}
+.modal-desc {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  color: var(--ink-mute);
+  margin-top: 4px;
+}
+.modal-body { padding: 12px 26px 22px; }
+.modal-footer {
+  padding: 14px 26px;
+  border-top: 1px dashed var(--rule-soft);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: var(--paper-2);
+}
+
+/* ─── Logs / mono blocks ───────────────────── */
+.log-container {
+  background: var(--paper-2);
+  border: 1.5px solid var(--ink);
+  height: 540px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  position: relative;
+}
+.log-container::after {
+  content: '';
+  position: absolute;
+  inset: 4px -4px -4px 4px;
+  border: 1px solid var(--rule-soft);
+  pointer-events: none;
+}
+.log-entry {
+  padding: 3px 16px;
+  border-bottom: 1px dotted var(--rule-faint);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  word-break: break-all;
+}
+.log-entry:hover { background: var(--paper-3); }
+.log-entry .ts { color: var(--ink-mute); flex-shrink: 0; font-size: 11px; }
+.log-entry .lvl {
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 50px;
+}
+.log-entry.debug .lvl { color: var(--ink-mute); }
+.log-entry.info .lvl { color: var(--info); }
+.log-entry.warn .lvl { color: var(--warn); }
+.log-entry.error .lvl { color: var(--error); }
+.log-entry.error { background: var(--accent-soft); }
+
+.log-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.log-controls .input, .log-controls .select { width: auto; }
+.log-controls .search { flex: 1; min-width: 200px; }
+
+/* ─── Chart container (hand-drawn axes) ────── */
+.chart-card {
+  background: var(--paper-2);
+  border: 1.5px solid var(--ink);
+  padding: 22px;
+  margin-bottom: 24px;
+  position: relative;
+}
+.chart-card::after {
+  content: '';
+  position: absolute;
+  inset: 4px -4px -4px 4px;
+  border: 1px solid var(--rule-soft);
+  z-index: -1;
+}
+.chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 280px;
+  margin-top: 14px;
+}
+.chart-canvas-wrap canvas { width: 100%; height: 100%; display: block; }
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rule-soft);
+  font-family: 'Caveat', cursive;
+  font-size: 16px;
+}
+.chart-legend-item {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer;
+}
+.chart-legend-swatch { width: 18px; height: 4px; }
+
+/* ─── LS pool cards ────────────────────────── */
+.ls-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0;
+  border: 1.5px solid var(--ink);
+}
+.ls-inst {
+  padding: 14px 16px;
+  background: var(--paper-2);
+  border-right: 1px dashed var(--rule-soft);
+  border-bottom: 1px dashed var(--rule-soft);
+  font-size: 12px;
+}
+.ls-inst .ls-key {
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'WONK' 1;
+  font-weight: 500;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ls-inst .ls-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  flex-shrink: 0;
+}
+.ls-inst .ls-dot.pending { background: var(--warn); }
+.ls-inst .ls-meta { color: var(--ink-mute); font-family: 'JetBrains Mono', monospace; font-size: 11px; margin-top: 2px; }
+
+/* Model chip */
+.model-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.model-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  background: var(--paper);
+  border: 1.2px solid var(--rule-soft);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: all .12s;
+}
+.model-chip:hover { border-color: var(--ink); color: var(--ink); }
+.model-chip.selected { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.model-chip.blocked { opacity: .5; text-decoration: line-through; }
+.model-chip .remove { color: var(--accent); font-weight: 700; cursor: pointer; padding: 0 2px; }
+.provider-group { margin-bottom: 14px; }
+.provider-label {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+.provider-label::after {
+  content: ''; flex: 1; height: 1px; background: var(--rule-faint); margin-left: 4px;
+}
+
+/* Bars panel */
+.bars-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 180px;
+  padding: 0 10px;
+  border-bottom: 1.5px solid var(--ink);
+  border-left: 1.5px solid var(--ink);
+  position: relative;
+}
+.bars-row::before {
+  content: '';
+  position: absolute;
+  bottom: -1.5px; left: 0; right: 0;
+  height: 6px;
+  pointer-events: none;
+}
+.bar-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+  position: relative;
+}
+.b-bar {
+  width: 100%;
+  min-width: 6px;
+  max-width: 28px;
+  background-image: repeating-linear-gradient(45deg, var(--ink), var(--ink) 3px, transparent 3px, transparent 6px);
+  transition: all .3s;
+  cursor: pointer;
+  border: 1.5px solid var(--ink);
+  border-bottom: none;
+}
+.b-bar.has-errors {
+  background-image: repeating-linear-gradient(45deg, var(--error), var(--error) 3px, transparent 3px, transparent 6px);
+  border-color: var(--error);
+}
+.bar-wrap:hover .b-bar { filter: brightness(1.1); }
+
+/* Capability list */
+.cap-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.cap-item {
+  font-size: 10px;
+  padding: 1px 7px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.cap-item.ok { color: var(--good); }
+.cap-item.fail { color: var(--error); text-decoration: line-through; }
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--rule-faint);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Utilities */
+.hidden { display: none !important; }
+.text-mute { color: var(--ink-mute); }
+.text-dim { color: var(--ink-dim); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.nowrap { white-space: nowrap; }
+.break-all { word-break: break-all; }
+.flex { display: flex; }
+.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
+.mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; }
+.italic { font-style: italic; }
+
+/* ─── Responsive ───────────────────────────── */
+@media (max-width: 900px) {
+  .sidebar { width: 60px; }
+  .sidebar .brand-tag, .sidebar .brand-rule, .sidebar nav a span:not(.nav-pill), .sidebar .nav-group-label { display: none; }
+  .sidebar .brand { padding: 18px 0; text-align: center; }
+  .sidebar .brand-mark { font-size: 26px; }
+  .sidebar nav a { justify-content: center; padding: 10px; }
+  .sidebar .footer { flex-direction: column; gap: 6px; padding: 12px; }
+  .main { margin-left: 60px; padding: 22px 18px 60px; }
+  .page-title { font-size: 32px; }
+}
+
+/* Annotation */
+.anno {
+  font-family: 'Caveat', cursive;
+  font-size: 17px;
+  color: var(--ink-mute);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.anno::before {
+  content: '✱';
+  color: var(--accent);
+  font-size: 14px;
+}
+
+/* "Sticker" — diagonal label */
+.sticker {
+  display: inline-block;
+  font-family: 'Caveat', cursive;
+  font-size: 18px;
+  padding: 2px 12px;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  transform: rotate(-2.5deg);
+  background: var(--paper);
+}
+
+/* Avatar circle (login history) */
+.avatar-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  font-family: 'Fraunces', serif;
+  font-variation-settings: 'WONK' 1;
+  font-weight: 500;
+  font-size: 14px;
+  border-radius: 50%;
+  color: var(--ink);
+}
+
+/* Decorative arrow */
+.draw-arrow {
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 12' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M2 6 Q 8 4, 14 6 T 20 6'/><path d='M16 2 L 20 6 L 16 10'/></svg>");
+  background-repeat: no-repeat;
+  color: currentColor;
+}
+</style>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+import { getAuth, signInWithPopup, GoogleAuthProvider, GithubAuthProvider } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
+const _fbApp = initializeApp({
+  apiKey: 'AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY',
+  authDomain: 'exa2-fb170.firebaseapp.com',
+  projectId: 'exa2-fb170',
+});
+const _fbAuth = getAuth(_fbApp);
+window._firebaseOAuth = async function(provider) {
+  const p = provider === 'github' ? new GithubAuthProvider() : new GoogleAuthProvider();
+  if (provider === 'google') p.addScope('email');
+  const result = await signInWithPopup(_fbAuth, p);
+  const idToken = await result.user.getIdToken();
+  return {
+    idToken,
+    refreshToken: result.user.stsTokenManager?.refreshToken || '',
+    email: result.user.email || '',
+    provider,
+  };
+};
+</script>
+</head>
+<body>
+
+<!-- ════════ Sidebar ════════ -->
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-row">
+      <div class="brand-mark">W<span class="amp">&amp;</span>API</div>
+    </div>
+    <div class="brand-tag">a console for the curious</div>
+    <div class="brand-rule"></div>
+  </div>
+  <nav>
+    <div class="nav-group">
+      <div class="nav-group-label" data-zh="概览" data-en="overview">概览</div>
+      <a href="#overview" class="active" data-panel="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span data-zh="仪表盘" data-en="Dashboard">仪表盘</span>
+      </a>
+      <a href="#stats" data-panel="stats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span data-zh="统计分析" data-en="Statistics">统计分析</span>
+      </a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label" data-zh="账号" data-en="accounts">账号</div>
+      <a href="#windsurf-login" data-panel="windsurf-login">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        <span data-zh="登录取号" data-en="Login &amp; Acquire">登录取号</span>
+      </a>
+      <a href="#accounts" data-panel="accounts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span data-zh="账号管理" data-en="Account Manager">账号管理</span>
+        <span class="nav-pill" id="nav-accounts-count">·</span>
+      </a>
+      <a href="#bans" data-panel="bans">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span data-zh="异常监测" data-en="Anomalies">异常监测</span>
+      </a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label" data-zh="系统" data-en="system">系统</div>
+      <a href="#models" data-panel="models">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span data-zh="模型控制" data-en="Models">模型控制</span>
+      </a>
+      <a href="#proxy" data-panel="proxy">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        <span data-zh="代理配置" data-en="Proxy">代理配置</span>
+      </a>
+      <a href="#logs" data-panel="logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span data-zh="运行日志" data-en="Logs">运行日志</span>
+      </a>
+      <a href="#experimental" data-panel="experimental">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V2"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/></svg>
+        <span data-zh="实验性功能" data-en="Experimental">实验性功能</span>
+      </a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label" data-zh="关于" data-en="about">关于</div>
+      <a href="#credits" data-panel="credits">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        <span data-zh="致谢" data-en="Credits">致谢</span>
+      </a>
+    </div>
+  </nav>
+  <div class="footer">
+    <button class="theme-toggle" onclick="App.toggleTheme()" title="theme"><span id="theme-ind"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span></button>
+    <button class="lang-toggle" onclick="App.toggleLang()" title="language"><span id="lang-ind">中</span> / EN</button>
+    <button class="lang-toggle" onclick="App.switchSkin('modern')" title="switch to default skin">默认皮</button>
+    <span class="ver" id="sidebar-ver">v1.2.0</span>
+  </div>
+</aside>
+
+<!-- ════════ Main ════════ -->
+<main class="main">
+
+  <!-- ─── Overview ─── -->
+  <section class="panel active" id="p-overview">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 01</span><span class="anno" data-zh="今天怎么样？" data-en="How are we today?">今天怎么样？</span></div>
+        <h1 class="page-title"><em class="em">Dash</em>board</h1>
+        <div class="page-subtitle" data-zh="系统运行状态与关键指标" data-en="Runtime state &amp; key metrics">系统运行状态与关键指标</div>
+      </div>
+      <div class="page-meta">
+        <div><span data-zh="时间" data-en="now">now</span> · <b id="hdr-now">—</b></div>
+        <div class="stamp" id="hdr-stamp">DRAFT</div>
+        <div class="btn-group" style="margin-top:10px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" id="btn-check-update" onclick="App.checkUpdate()" data-zh="检查更新" data-en="Check update">检查更新</button>
+          <button class="btn btn-primary btn-sm hidden" id="btn-apply-update" onclick="App.applyUpdate()" data-zh="一键更新" data-en="Update now">一键更新</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="update-status" class="frame hidden" style="padding:14px;margin-bottom:18px"></div>
+
+    <div class="metrics-grid" id="overview-cards"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">i</span><span data-zh="语言服务器" data-en="Language Server">语言服务器</span></div>
+          <div class="section-desc" data-zh="多实例 Cascade language-server 池状态" data-en="Cascade language-server pool status">多实例 Cascade language-server 池状态</div>
+        </div>
+        <div class="section-actions">
+          <button class="btn btn-ghost btn-sm" onclick="App.restartLs()" data-zh="重启" data-en="Restart"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> 重启</button>
+        </div>
+      </div>
+      <div class="frame tight"><div class="frame-body" id="ls-status"></div></div>
+    </div>
+  </section>
+
+  <!-- ─── Stats ─── -->
+  <section class="panel" id="p-stats">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 02</span><span class="anno" data-zh="数据告诉我们什么？" data-en="What's the data say?">数据告诉我们什么？</span></div>
+        <h1 class="page-title"><em class="em">Stat</em>istics</h1>
+        <div class="page-subtitle" data-zh="请求量 · 成功率 · 模型分布" data-en="Volume · success rate · model split">请求量 · 成功率 · 模型分布</div>
+      </div>
+      <div class="page-meta">
+        <span class="sticker" data-zh="实时" data-en="LIVE">LIVE</span>
+        <button class="btn btn-ghost btn-sm" onclick="App.resetStats()" data-zh="清空统计" data-en="Reset stats" style="margin-left:10px">清空统计</button>
+      </div>
+    </header>
+
+    <div class="metrics-grid" id="stats-cards"></div>
+
+    <div class="chart-card">
+      <div class="section-head" style="border:none;margin:0 0 4px;padding:0">
+        <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="请求量趋势" data-en="Request volume">请求量趋势</span></div>
+          <div class="section-desc" data-zh="按小时聚合，最近 24h" data-en="Hourly buckets, last 24h">按小时聚合，最近 24h</div>
+        </div>
+        <div class="segmented" id="stats-range">
+          <label><input type="radio" name="range" value="24h" checked onchange="App.loadStats()">24h</label>
+          <label><input type="radio" name="range" value="7d" onchange="App.loadStats()">7d</label>
+          <label><input type="radio" name="range" value="30d" onchange="App.loadStats()">30d</label>
+        </div>
+      </div>
+      <div class="bars-row" id="stats-bars"></div>
+      <div class="chart-legend">
+        <div class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--ink)"></span>requests</div>
+        <div class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--error)"></span>errors</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">M</span><span data-zh="模型使用统计" data-en="Model breakdown">模型使用统计</span></div>
+          <div class="section-desc" data-zh="按模型聚合 · 请求量 · 成功率 · 平均耗时与 p50 / p95" data-en="Per-model · volume · success · latency p50 / p95">按模型聚合 · 请求量 · 成功率 · 平均耗时与 p50 / p95</div>
+        </div>
+      </div>
+      <div class="frame tight">
+        <div class="frame-body tight">
+          <div class="table-wrap">
+            <table id="model-stats-table">
+              <thead><tr><th>Model</th><th>Requests</th><th>Success</th><th>Errors</th><th>Rate</th><th>Avg</th><th>p50</th><th>p95</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">A</span><span data-zh="账号维度统计" data-en="Per-account stats">账号维度统计</span></div>
+          <div class="section-desc" data-zh="每个账号的请求量与成功率" data-en="Volume &amp; success rate per account">每个账号的请求量与成功率</div>
+        </div>
+      </div>
+      <div class="frame tight">
+        <div class="frame-body tight">
+          <div class="table-wrap">
+            <table id="account-stats-table">
+              <thead><tr><th>Account</th><th>Requests</th><th>Success</th><th>Errors</th><th>Rate</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Windsurf Login ─── -->
+  <section class="panel" id="p-windsurf-login">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 03</span><span class="anno" data-zh="先取个号？" data-en="Grab a key?">先取个号？</span></div>
+        <h1 class="page-title"><em class="em">Acquire</em> a Key</h1>
+        <div class="page-subtitle" data-zh="Google · GitHub · 邮箱密码 三种方式" data-en="Google · GitHub · email/password">Google · GitHub · 邮箱密码 三种方式</div>
+      </div>
+    </header>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">1</span><span data-zh="快捷登录（推荐）" data-en="OAuth (recommended)">快捷登录（推荐）</span></div>
+          <div class="section-desc" data-zh="Google / GitHub 直接登录 Windsurf，无需密码" data-en="Sign in with Google or GitHub — no password.">Google / GitHub 直接登录 Windsurf，无需密码</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+          <button class="btn" onclick="App.oauthLogin('google')" id="oauth-google-btn" style="padding:10px 22px;font-weight:600;gap:10px">
+            <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.2-2.7-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.5 18.8 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.6-11.2-8.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.2-2.7-.4-3.9z"/></svg>
+            Google
+          </button>
+          <button class="btn" onclick="App.oauthLogin('github')" id="oauth-github-btn" style="padding:10px 22px;font-weight:600;gap:10px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 016.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.21.7.82.58A11.99 11.99 0 0024 12C24 5.37 18.63 0 12 0z"/></svg>
+            GitHub
+          </button>
+        </div>
+        <div id="oauth-status" style="margin-top:14px;font-family:'Caveat',cursive;font-size:18px;color:var(--ink-mute)"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">2</span><span data-zh="邮箱 + 密码" data-en="Email &amp; password">邮箱 + 密码</span></div>
+          <div class="section-desc" data-zh="使用邮箱密码登录 Windsurf 并自动取出 API Key" data-en="Use email/password to log in and auto-extract API key.">使用邮箱密码登录 Windsurf 并自动取出 API Key</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div class="field-row">
+          <div class="field"><label class="field-label">Email</label><input class="input" id="wl-email" placeholder="you@example.com"></div>
+          <div class="field"><label class="field-label">Password</label><input class="input" id="wl-password" type="password" placeholder="••••••••"></div>
+        </div>
+        <details style="margin-top:18px">
+          <summary class="field-label" style="cursor:pointer">Proxy (optional)</summary>
+          <div class="field-row" style="margin-top:12px">
+            <div class="field"><label class="field-label">Type</label><select class="select" id="wl-proxy-type"><option>http</option><option>https</option><option>socks5</option></select></div>
+            <div class="field"><label class="field-label">Host</label><input class="input" id="wl-proxy-host" placeholder="proxy.host"></div>
+            <div class="field"><label class="field-label">Port</label><input class="input" id="wl-proxy-port" placeholder="8080" type="number"></div>
+            <div class="field"><label class="field-label">User</label><input class="input" id="wl-proxy-user" placeholder="optional"></div>
+            <div class="field"><label class="field-label">Pass</label><input class="input" id="wl-proxy-pass" type="password" placeholder="optional"></div>
+          </div>
+          <div class="field-row-actions" style="margin-top:8px">
+            <button class="btn btn-ghost btn-sm" id="wl-proxy-test-btn" onclick="App.testLoginProxy()" data-zh="测试代理" data-en="Test proxy">测试代理</button>
+            <span id="wl-proxy-test-result" class="text-sm text-mute" style="margin-left:10px"></span>
+          </div>
+        </details>
+        <div class="field-row-actions">
+          <label class="checkbox"><input type="checkbox" id="wl-auto-add" checked><span class="box-mark"></span><span data-zh="登录成功后自动加入账号池" data-en="Auto-add to pool on success">登录成功后自动加入账号池</span></label>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary" id="wl-btn" onclick="App.windsurfLogin()" data-zh="登录取号" data-en="Acquire">登录取号 <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">3</span><span data-zh="批量导入" data-en="Batch import">批量导入</span></div>
+          <div class="section-desc" data-zh="每行一组：email password [proxy]。proxy 可省略；格式 type://[user:pass@]host:port，例 socks5://127.0.0.1:7890 或 http://u:p@1.2.3.4:8080。空白行忽略。" data-en="One per line: email password [proxy]. Proxy is optional; format type://[user:pass@]host:port (e.g. socks5://127.0.0.1:7890 or http://u:p@1.2.3.4:8080). Blank lines ignored.">每行一组：email password [proxy]。proxy 可省略；格式 type://[user:pass@]host:port，例 socks5://127.0.0.1:7890 或 http://u:p@1.2.3.4:8080。空白行忽略。</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="App.pasteWindsurfBatch()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> paste</button>
+      </div>
+      <div class="frame">
+        <textarea class="textarea input" id="wl-batch-input" rows="6" style="font-family:'JetBrains Mono',monospace;resize:vertical;width:100%" placeholder="alice@example.com  hunter2&#10;bob@example.com  letme1n"></textarea>
+        <div class="field-row-actions">
+          <button class="btn btn-primary" id="wl-batch-btn" onclick="App.windsurfLoginBatch()" data-zh="批量导入" data-en="Batch import">批量导入</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="wl-result" class="frame hidden" style="margin-bottom:24px"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">H</span><span data-zh="登录历史" data-en="Login history">登录历史</span></div></div>
+      </div>
+      <div class="frame tight"><div class="frame-body tight">
+        <div class="table-wrap">
+          <table id="wl-history-table">
+            <thead><tr><th>Time</th><th>Email</th><th>Status</th><th>Proxy</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ─── Accounts ─── -->
+  <section class="panel" id="p-accounts">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 04</span><span class="anno" data-zh="谁在工作？" data-en="Who's working?">谁在工作？</span></div>
+        <h1 class="page-title"><em class="em">Account</em> Manager</h1>
+        <div class="page-subtitle" data-zh="点击 <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg> 展开看每个账号的额度 / 计划 / 模型清单" data-en="Click <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg> to expand quota · plan · models">点击 <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg> 展开看每个账号的额度 / 计划 / 模型清单</div>
+      </div>
+      <div class="page-meta">
+        <div class="btn-group" style="justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="App.probeAll()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> probe all</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.refreshAllCredits()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> refresh credits</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="ls-pool-card"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">+</span><span data-zh="添加账号" data-en="Add an account">添加账号</span></div>
+          <div class="section-desc" data-zh="粘贴 API Key 或 Token（来自 windsurf.com/show-auth-token）" data-en="Paste an API Key or auth token (from windsurf.com/show-auth-token)">粘贴 API Key 或 Token</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div class="field-row">
+          <div class="field"><label class="field-label">Type</label><select class="select" id="acc-type"><option value="api_key">API Key</option><option value="token">Token</option></select></div>
+          <div class="field" style="flex:3"><label class="field-label">Key / Token</label><input class="input" id="acc-key" placeholder="paste here"></div>
+          <div class="field"><label class="field-label">Label (optional)</label><input class="input" id="acc-label" placeholder="my-laptop"></div>
+        </div>
+        <div class="field-row-actions">
+          <button class="btn btn-primary" onclick="App.addAccount()" data-zh="加入账号池" data-en="Add to pool">＋ 加入账号池</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">▤</span><span data-zh="账号池" data-en="Account pool">账号池</span></div></div>
+      </div>
+      <div class="frame tight"><div class="frame-body tight">
+        <div class="table-wrap">
+          <table id="accounts-table">
+            <thead><tr>
+              <th>ID</th><th>Email</th><th>Tier</th><th>RPM</th><th>Credits</th><th>Models</th><th>Status</th><th>Errs</th><th>Last used</th><th>Key</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ─── Bans ─── -->
+  <section class="panel" id="p-bans">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 05</span><span class="anno" data-zh="出问题了吗？" data-en="Anything broken?">出问题了吗？</span></div>
+        <h1 class="page-title"><em class="em">Anom</em>alies</h1>
+        <div class="page-subtitle" data-zh="错误账号与异常状态" data-en="Errored accounts &amp; abnormal states">错误账号与异常状态</div>
+      </div>
+    </header>
+    <div class="metrics-grid" id="ban-cards"></div>
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">!</span><span data-zh="账号健康状况" data-en="Account health">账号健康状况</span></div></div>
+      </div>
+      <div class="frame tight"><div class="frame-body tight">
+        <div class="table-wrap">
+          <table id="ban-table">
+            <thead><tr><th>Account</th><th>Status</th><th>Errors</th><th>Last used</th><th>Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ─── Models ─── -->
+  <section class="panel" id="p-models">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 06</span><span class="anno" data-zh="哪些可以叫？" data-en="Which models?">哪些可以叫？</span></div>
+        <h1 class="page-title"><em class="em">Model</em> Control</h1>
+        <div class="page-subtitle" data-zh="允许 / 禁用名单 + 模型目录" data-en="Allow / block list &amp; model catalog">允许 / 禁用名单 + 模型目录</div>
+      </div>
+    </header>
+
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">∀</span><span data-zh="访问模式" data-en="Access mode">访问模式</span></div></div>
+      </div>
+      <div class="frame">
+        <div class="segmented" style="margin-bottom:16px">
+          <label><input type="radio" name="model-mode" value="all" onchange="App.setModelMode('all')" checked>全部</label>
+          <label><input type="radio" name="model-mode" value="allowlist" onchange="App.setModelMode('allowlist')">白名单</label>
+          <label><input type="radio" name="model-mode" value="blocklist" onchange="App.setModelMode('blocklist')">黑名单</label>
+        </div>
+        <div id="model-list-section" class="hidden">
+          <div class="anno" id="model-list-title">当前清单</div>
+          <div id="model-list-current" style="margin:6px 0 16px"></div>
+          <div class="field-row" style="margin-bottom:12px">
+            <div class="field"><label class="field-label">Search</label><input class="input" id="model-search" placeholder="qwen, claude, gpt …" oninput="App.filterModels()"></div>
+            <div class="field"><label class="field-label">Provider</label><select class="select" id="model-provider-filter" onchange="App.filterModels()"><option value="">All providers</option></select></div>
+          </div>
+          <div id="model-chips-container" style="max-height:50vh;overflow:auto;padding-right:8px"></div>
+          <div class="field-hint" id="model-list-hint" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Proxy ─── -->
+  <section class="panel" id="p-proxy">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 07</span><span class="anno" data-zh="走哪条路？" data-en="Which route?">走哪条路？</span></div>
+        <h1 class="page-title"><em class="em">Proxy</em> Routing</h1>
+        <div class="page-subtitle" data-zh="全局代理 + 每账号代理" data-en="Global proxy &amp; per-account overrides">全局代理 + 每账号代理</div>
+      </div>
+    </header>
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">G</span><span data-zh="全局代理" data-en="Global proxy">全局代理</span></div>
+          <div class="section-desc" id="proxy-current">未配置</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div class="field-row">
+          <div class="field"><label class="field-label">Type</label><select class="select" id="proxy-type"><option>http</option><option>https</option><option>socks5</option></select></div>
+          <div class="field"><label class="field-label">Host</label><input class="input" id="proxy-host" placeholder="proxy.host"></div>
+          <div class="field"><label class="field-label">Port</label><input class="input" id="proxy-port" placeholder="8080" type="number"></div>
+          <div class="field"><label class="field-label">Username</label><input class="input" id="proxy-user" placeholder="optional"></div>
+          <div class="field"><label class="field-label">Password</label><input class="input" id="proxy-pass" type="password" placeholder="optional"></div>
+        </div>
+        <div class="field-row-actions">
+          <button class="btn btn-primary" onclick="App.saveGlobalProxy()" data-zh="保存" data-en="Save">保存</button>
+          <button class="btn btn-ghost" onclick="App.clearGlobalProxy()" data-zh="清除" data-en="Clear">清除</button>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num">a</span><span data-zh="每账号代理" data-en="Per-account">每账号代理</span></div></div>
+      </div>
+      <div class="frame tight"><div class="frame-body tight">
+        <div class="table-wrap">
+          <table id="proxy-accounts-table">
+            <thead><tr><th>Account</th><th>Proxy</th><th>Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ─── Logs ─── -->
+  <section class="panel" id="p-logs">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 08</span><span class="anno" data-zh="刚才发生了什么？" data-en="What happened?">刚才发生了什么？</span></div>
+        <h1 class="page-title"><em class="em">Run</em> Logs</h1>
+        <div class="page-subtitle" data-zh="实时流式日志 · SSE" data-en="Live stream · SSE">实时流式日志 · SSE</div>
+      </div>
+    </header>
+    <div class="log-controls">
+      <select class="select" id="log-level" onchange="App.applyLogFilter()">
+        <option value="">all levels</option>
+        <option value="debug">debug</option>
+        <option value="info">info</option>
+        <option value="warn">warn</option>
+        <option value="error">error</option>
+      </select>
+      <input class="input search" id="log-search" placeholder="search …" oninput="App.applyLogFilter()">
+      <label class="checkbox"><input type="checkbox" id="log-tail" checked><span class="box-mark"></span>auto-scroll</label>
+      <button class="btn btn-ghost btn-sm" onclick="App.clearLogs()">clear</button>
+    </div>
+    <div class="log-container" id="log-container"></div>
+  </section>
+
+  <!-- ─── Experimental ─── -->
+  <section class="panel" id="p-experimental">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 09</span><span class="anno" data-zh="不一定稳哦" data-en="Beware: unstable">不一定稳哦</span></div>
+        <h1 class="page-title"><em class="em">Exp</em>erimental</h1>
+        <div class="page-subtitle" data-zh="尚未稳定 — 出问题随时关闭" data-en="Toggle off any time">尚未稳定 — 出问题随时关闭</div>
+      </div>
+    </header>
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="Cascade 对话复用" data-en="Cascade reuse">Cascade 对话复用</span></div>
+          <div class="section-desc" data-zh="多轮对话复用 cascade_id，让服务端维持上下文缓存。" data-en="Reuse cascade_id across turns to hit server-side context cache.">多轮对话复用 cascade_id，让服务端维持上下文缓存。</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+          <label class="switch"><input type="checkbox" id="exp-cascade-reuse" onchange="App.toggleExperimental('cascadeConversationReuse', this.checked)"><span class="switch-slider"></span></label>
+          <div>
+            <div style="font-weight:500" data-zh="启用 Cascade 对话复用" data-en="Enable cascade reuse">启用 Cascade 对话复用</div>
+            <div class="text-sm text-mute" data-zh="默认关闭。开启后立即生效。" data-en="Off by default. Takes effect immediately.">默认关闭。开启后立即生效。</div>
+          </div>
+        </div>
+        <div class="metrics-grid" id="exp-pool-cards" style="margin:0;border:1.5px solid var(--rule-faint)"></div>
+        <div class="field-row-actions">
+          <button class="btn btn-ghost btn-sm" onclick="App.clearConversationPool()">clear pool</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.loadExperimental()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:24px">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="系统提示词" data-en="System prompts">系统提示词</span></div>
+          <div class="section-desc" data-zh="工具注入、对话模式等内置提示词。改完点 save；reset 恢复默认。" data-en="Built-in prompt templates. Edit and save; reset to restore defaults.">工具注入、对话模式等内置提示词。改完点 save；reset 恢复默认。</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div id="system-prompts-editor" style="display:grid;gap:14px"></div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:24px">
+      <div class="section-head">
+        <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="界面风格" data-en="Console skin">界面风格</span></div>
+          <div class="section-desc" data-zh="切回默认现代风皮肤。选择后立即写 cookie 并刷新。" data-en="Switch back to the default modern skin. Selecting writes a cookie and reloads.">切回默认现代风皮肤。选择后立即写 cookie 并刷新。</div>
+        </div>
+      </div>
+      <div class="frame">
+        <div style="display:flex;align-items:center;gap:14px">
+          <select id="skin-select" class="select" style="max-width:240px" onchange="App.switchSkin(this.value)">
+            <option value="modern" data-zh="默认现代风" data-en="Default (modern)">默认现代风</option>
+            <option value="sketch" data-zh="手绘草稿风（当前）" data-en="Sketch (current)">手绘草稿风（当前）</option>
+          </select>
+          <span class="text-sm text-mute" data-zh="当前为草稿风" data-en="Currently sketch skin">当前为草稿风</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Credits ─── -->
+  <section class="panel" id="p-credits">
+    <header class="page-header">
+      <div>
+        <div><span class="page-num">№ 10</span><span class="anno" data-zh="谢谢你们" data-en="Thank you">谢谢你们</span></div>
+        <h1 class="page-title"><em class="em">Cre</em>dits</h1>
+        <div class="page-subtitle" data-zh="为这个项目提交 PR / 审计代码 / 修复 bug 的朋友们" data-en="People who shipped PRs · audited code · fixed bugs">为这个项目提交 PR / 审计代码 / 修复 bug 的朋友们</div>
+      </div>
+    </header>
+    <div class="section">
+      <div class="frame" id="credits-body">
+        <div class="text-mute italic">loading …</div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <div><div class="section-title"><span class="num"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span><span data-zh="想加入这份名单？" data-en="Want to join this list?">想加入这份名单？</span></div></div>
+      </div>
+      <div class="frame">
+        <p>欢迎到 GitHub 提 issue 或 PR — 修 bug、加模型、改 UI、发现安全问题都会被记录在这里。</p>
+        <div class="field-row-actions">
+          <a class="btn" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/issues">提 issue</a>
+          <a class="btn" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pulls">提 PR</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Login overlay -->
+<div class="login-overlay hidden" id="login-overlay">
+  <div class="login-box">
+    <div class="login-mark">W<span class="em">&amp;</span>API</div>
+    <div class="login-tag">a console for the curious</div>
+    <input type="password" id="login-password" class="input" placeholder="dashboard password" onkeydown="if(event.key==='Enter')App.login()">
+    <button class="btn btn-primary" onclick="App.login()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg> enter</button>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+<div class="toast-stack" id="toast-stack"></div>
+
+<script>
+/* ──────────────────────────────────────────────
+   Tiny i18n — element-attribute-driven
+   ────────────────────────────────────────────── */
+const I18n = {
+  locale: localStorage.getItem('lang') || 'zh',
+  apply() {
+    document.querySelectorAll('[data-zh]').forEach(el => {
+      const v = this.locale === 'en' ? el.dataset.en : el.dataset.zh;
+      if (v != null) el.textContent = v;
+    });
+    document.documentElement.lang = this.locale === 'en' ? 'en' : 'zh-CN';
+    const ind = document.getElementById('lang-ind');
+    if (ind) ind.textContent = this.locale === 'en' ? 'EN' : '中';
+  },
+  setLocale(l) { this.locale = l; localStorage.setItem('lang', l); this.apply(); },
+};
+
+/* ──────────────────────────────────────────────
+   App
+   ────────────────────────────────────────────── */
+const App = {
+  password: localStorage.getItem('dp') || '',
+  sseConn: null,
+  logEntries: [],
+  pollers: {},
+  allModels: [],
+  modelAccessConfig: { mode: 'all', list: [] },
+  loginHistory: JSON.parse(localStorage.getItem('wl_history') || '[]'),
+  _expandedAccounts: new Set(),
+  _modelsCatalog: null,
+
+  /* ── theme ── */
+  toggleTheme() {
+    const cur = document.documentElement.dataset.theme;
+    const next = cur === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('theme', next);
+    document.getElementById('theme-ind').innerHTML = next === 'light' ? `<svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>` : `<svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+  },
+  toggleLang() { I18n.setLocale(I18n.locale === 'zh' ? 'en' : 'zh'); },
+  /* ── skin (sketch ↔ default modern UI) ── */
+  switchSkin(skin) {
+    const next = skin === 'sketch' ? 'sketch' : 'modern';
+    const oneYear = 365 * 24 * 3600;
+    document.cookie = `dashboard_skin=${next}; path=/; max-age=${oneYear}; samesite=lax`;
+    location.reload();
+  },
+
+  /* ── boot ── */
+  async init() {
+    const t = localStorage.getItem('theme');
+    if (t) {
+      document.documentElement.dataset.theme = t;
+      const ind = document.getElementById('theme-ind');
+      if (ind) ind.innerHTML = t === 'light' ? `<svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>` : `<svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+    }
+    I18n.apply();
+    setInterval(() => {
+      const el = document.getElementById('hdr-now');
+      if (el) el.textContent = new Date().toLocaleTimeString();
+    }, 1000);
+    document.getElementById('hdr-now').textContent = new Date().toLocaleTimeString();
+
+    const auth = await this.api('GET', '/auth');
+    if (auth.required && !auth.valid) {
+      document.getElementById('login-overlay').classList.remove('hidden');
+      return;
+    }
+    document.getElementById('login-overlay').classList.add('hidden');
+    document.querySelectorAll('.sidebar nav a').forEach(a => {
+      a.onclick = (e) => { e.preventDefault(); this.navigate(a.dataset.panel); };
+    });
+    const hash = location.hash.slice(1);
+    if (hash) this.navigate(hash); else this.loadOverview();
+  },
+
+  login() {
+    this.password = document.getElementById('login-password').value;
+    localStorage.setItem('dp', this.password);
+    this.init();
+  },
+
+  navigate(panel) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.remove('active'));
+    const el = document.getElementById('p-' + panel);
+    const nav = document.querySelector(`[data-panel="${panel}"]`);
+    if (el) el.classList.add('active');
+    if (nav) nav.classList.add('active');
+    location.hash = panel;
+    Object.values(this.pollers).forEach(clearInterval);
+    this.pollers = {};
+    if (this.sseConn) { this.sseConn.close(); this.sseConn = null; }
+    const loaders = {
+      overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
+      accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
+      logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
+      experimental: 'loadExperimental', credits: 'loadCredits',
+    };
+    if (loaders[panel]) this[loaders[panel]]();
+  },
+
+  async api(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
+    if (body) opts.body = JSON.stringify(body);
+    try {
+      const r = await fetch('/dashboard/api' + path, opts);
+      const data = await r.json();
+      if (r.status === 401) {
+        document.getElementById('login-overlay').classList.remove('hidden');
+        return {};
+      }
+      return data;
+    } catch (e) { this.toast(e.message, 'error'); return {}; }
+  },
+
+  poll(key, fn, ms) {
+    if (this.pollers[key]) clearInterval(this.pollers[key]);
+    this.pollers[key] = setInterval(() => { if (!document.hidden) fn(); }, ms);
+  },
+
+  esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  },
+  escAttr(s) { return this.esc(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
+
+  /* ── toast ── */
+  toast(msg, type = 'success') {
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    const icon = type === 'success' ? `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg>` : type === 'error' ? `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>` : 'i';
+    t.innerHTML = `<span class="toast-icon">${icon}</span><span>${this.esc(msg)}</span>`;
+    document.getElementById('toast-stack').appendChild(t);
+    setTimeout(() => {
+      t.style.opacity = '0'; t.style.transform = 'translateX(20px)'; t.style.transition = 'all .2s';
+      setTimeout(() => t.remove(), 200);
+    }, 3000);
+  },
+
+  /* ── modal helpers ── */
+  confirm(title, desc, opts = {}) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-overlay';
+      const descHtml = desc
+        ? (opts.html ? `<div class="modal-body">${desc}</div>` : `<div class="modal-desc">${this.esc(desc)}</div>`)
+        : '';
+      const widthStyle = opts.wide ? ' style="max-width:680px;width:92vw"' : '';
+      wrap.innerHTML = `
+        <div class="modal"${widthStyle}>
+          <div class="modal-header">
+            <div class="modal-title">${opts.titleHtml ? title : this.esc(title)}</div>
+            ${opts.html ? '' : (desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : '')}
+          </div>
+          ${opts.html ? descHtml : ''}
+          <div class="modal-footer">
+            <button class="btn btn-ghost" data-act="cancel">${this.esc(opts.cancelText || 'Cancel')}</button>
+            <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-act="ok">${this.esc(opts.okText || 'OK')}</button>
+          </div>
+        </div>`;
+      document.getElementById('modal-container').appendChild(wrap);
+      const close = (v) => { wrap.remove(); resolve(v); };
+      wrap.querySelector('[data-act=cancel]').onclick = () => close(false);
+      wrap.querySelector('[data-act=ok]').onclick = () => close(true);
+      wrap.onclick = (e) => { if (e.target === wrap) close(false); };
+    });
+  },
+
+  prompt(title, desc, fields) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-overlay';
+      const fieldHtml = fields.map(f => `
+        <div class="field" style="margin-top:14px">
+          <label class="field-label">${this.esc(f.label)}</label>
+          ${f.type === 'select'
+            ? `<select class="select" data-name="${f.name}">${f.options.map(o => `<option value="${this.esc(o.value)}" ${o.value === f.value ? 'selected' : ''}>${this.esc(o.label)}</option>`).join('')}</select>`
+            : `<input class="input" data-name="${f.name}" type="${f.type || 'text'}" placeholder="${this.esc(f.placeholder || '')}" value="${this.esc(f.value || '')}">`}
+          ${f.hint ? `<div class="field-hint">${this.esc(f.hint)}</div>` : ''}
+        </div>`).join('');
+      wrap.innerHTML = `
+        <div class="modal">
+          <div class="modal-header">
+            <div class="modal-title">${this.esc(title)}</div>
+            ${desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : ''}
+          </div>
+          <div class="modal-body">${fieldHtml}</div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" data-act="cancel">Cancel</button>
+            <button class="btn btn-primary" data-act="ok">OK</button>
+          </div>
+        </div>`;
+      document.getElementById('modal-container').appendChild(wrap);
+      const close = (v) => { wrap.remove(); resolve(v); };
+      wrap.querySelector('[data-act=cancel]').onclick = () => close(null);
+      wrap.querySelector('[data-act=ok]').onclick = () => {
+        const values = {};
+        wrap.querySelectorAll('[data-name]').forEach(el => values[el.dataset.name] = el.value);
+        close(values);
+      };
+      wrap.onclick = (e) => { if (e.target === wrap) close(null); };
+      setTimeout(() => wrap.querySelector('input, select')?.focus(), 100);
+    });
+  },
+
+  /* ── format ── */
+  fmtDuration(s) {
+    if (!s) return '-';
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m ${s % 60}s`;
+  },
+
+  /* ── update ── */
+  async checkUpdate() {
+    const btn = document.getElementById('btn-check-update');
+    const status = document.getElementById('update-status');
+    const apply = document.getElementById('btn-apply-update');
+    btn.disabled = true;
+    status.classList.remove('hidden');
+    status.innerHTML = '<span class="text-mute italic">checking …</span>';
+    try {
+      const r = await this.api('GET', '/self-update/check');
+      if (!r.ok) {
+        if (/not a git repository/i.test(r.error || '')) {
+          status.innerHTML = `<div style="color:var(--warn);font-weight:600;margin-bottom:4px">Not a git repository</div><div class="text-sm text-mute">Self-update only works for git checkouts.</div>`;
+          apply.classList.add('hidden');
+          return;
+        }
+        throw new Error(r.error || 'API error');
+      }
+      if (r.behind) {
+        status.innerHTML = `<div style="color:var(--accent);font-weight:600;margin-bottom:6px">Update available</div><div class="text-sm" style="display:grid;gap:3px"><div>local <code>${this.esc(r.commit)}</code> <span class="text-mute">${this.esc(r.localMessage)}</span></div><div>remote <code>${this.esc(r.remoteCommit)}</code> <span class="text-mute">${this.esc(r.remoteMessage || '')}</span></div></div>`;
+        apply.classList.remove('hidden');
+      } else {
+        status.innerHTML = `<span style="color:var(--good)"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> up to date — ${this.esc(r.commit)} ${this.esc(r.localMessage)}</span>`;
+        apply.classList.add('hidden');
+      }
+    } catch (err) {
+      status.innerHTML = `<span style="color:var(--error)"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${this.esc(err.message)}</span>`;
+    } finally { btn.disabled = false; }
+  },
+
+  async applyUpdate() {
+    const ok = await this.confirm('Update & restart?', 'Pull latest then exec a restart.', { okText: 'Update & restart', danger: true });
+    if (!ok) return;
+    const status = document.getElementById('update-status');
+    const apply = document.getElementById('btn-apply-update');
+    apply.disabled = true;
+    status.innerHTML = '<span class="text-mute italic">pulling & restarting …</span>';
+    try {
+      let r = await this.api('POST', '/self-update');
+      if (r.dirty) {
+        const filesList = (r.dirtyFiles || []).slice(0, 10).map(f => this.esc(f)).join('<br>');
+        const force = await this.confirm('Working dir dirty', `<div>${filesList}</div>`, { okText: 'Force', danger: true, html: true });
+        if (!force) { status.innerHTML = '<span class="text-mute">cancelled</span>'; apply.disabled = false; return; }
+        r = await this.api('POST', '/self-update', { forceReset: true });
+      }
+      if (!r.ok) throw new Error(r.error || 'update failed');
+      if (r.changed) {
+        status.innerHTML = `<div style="color:var(--good);font-weight:600;margin-bottom:6px"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> ${this.esc(r.before)} <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg> ${this.esc(r.after)}</div><div class="text-sm text-mute">restarting…</div>`;
+        setTimeout(() => location.reload(), 8000);
+      } else {
+        status.innerHTML = '<span class="text-mute">no update needed</span>';
+        apply.classList.add('hidden');
+      }
+    } catch (err) {
+      status.innerHTML = `<span style="color:var(--error)"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${this.esc(err.message)}</span>`;
+    } finally { apply.disabled = false; }
+  },
+
+  /* ── overview ── */
+  async loadOverview() {
+    const d = await this.api('GET', '/overview') || {};
+    try {
+      const h = await fetch('/health').then(r => r.json()).catch(() => null);
+      if (h) {
+        const sv = document.getElementById('sidebar-ver');
+        if (sv) sv.textContent = h.commit ? `v${h.version}·${h.commit.slice(0,7)}` : `v${h.version}`;
+      }
+    } catch {}
+    const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
+    const ls = d.langServer || {};
+    const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const totalAccts = d.accounts?.total || 0;
+    const navAcct = document.getElementById('nav-accounts-count');
+    if (navAcct) navAcct.textContent = totalAccts;
+
+    document.getElementById('overview-cards').innerHTML = `
+      ${this.metric({ label: 'active accounts', value: d.accounts?.active || 0, sub: `${d.accounts?.total || 0} total · ${d.accounts?.error || 0} errored`, kind: 'good' })}
+      ${this.metric({ label: 'total requests', value: d.totalRequests || 0, sub: `${d.successRate || 0}% success`, kind: 'accent' })}
+      ${this.metric({ label: 'uptime', value: uptime, sub: d.startedAt ? new Date(d.startedAt).toLocaleString() : '—', valueSize: 22 })}
+      ${this.metric({ label: 'language server', value: ls.running ? 'running' : 'stopped', sub: `${poolCount} inst · :${ls.port || '-'}`, kind: ls.running ? 'good' : 'error', valueSize: 22 })}
+      ${this.metric({ label: 'response cache', value: (d.cache?.hitRate || '0.0') + '%', sub: `${d.cache?.hits || 0} / ${d.cache?.misses || 0} · ${d.cache?.size || 0}/${d.cache?.maxSize || 0}` })}
+    `;
+    const instances = ls.instances || [];
+    if (instances.length > 0) {
+      document.getElementById('ls-status').innerHTML = `<div class="ls-pool" style="border:none;margin:-18px -20px">${
+        instances.map(i => `<div class="ls-inst">
+          <div class="ls-key"><span class="ls-dot ${i.ready ? '' : 'pending'}"></span>${this.esc(i.key === 'default' ? 'default' : i.key.replace(/^px_/, ''))}</div>
+          <div class="ls-meta">port ${i.port} · pid ${i.pid || '-'}</div>
+          <div class="ls-meta">${this.esc(i.proxy || 'no proxy')}</div>
+        </div>`).join('')
+      }</div>`;
+    } else {
+      document.getElementById('ls-status').innerHTML = `<span class="badge ${ls.running ? 'running' : 'stopped'}">${ls.running ? 'running' : 'stopped'}</span> <span class="text-sm text-mute">pid ${ls.pid || '-'} · port ${ls.port || '-'} · restarts ${ls.restartCount || 0}</span>`;
+    }
+    this.poll('overview', () => this.loadOverview(), 15000);
+  },
+
+  metric(o) {
+    const sz = o.valueSize ? `font-size:${o.valueSize}px` : '';
+    return `<div class="metric ${o.kind || ''}">
+      <div class="m-label">${this.esc(o.label)}</div>
+      <div class="m-value" style="${sz}">${this.esc(o.value)}</div>
+      <div class="m-sub">${this.esc(o.sub || '')}</div>
+    </div>`;
+  },
+
+  async restartLs() {
+    const ok = await this.confirm('Restart language server?', 'Active sessions will be reset.', { danger: true, okText: 'Restart' });
+    if (!ok) return;
+    await this.api('POST', '/langserver/restart', { confirm: true });
+    this.toast('restarting…', 'info');
+  },
+
+  /* ── windsurf-login ── */
+  loadWindsurfLogin() { this.renderLoginHistory(); },
+
+  async oauthLogin(provider) {
+    const btn = document.getElementById(`oauth-${provider}-btn`);
+    const status = document.getElementById('oauth-status');
+    const label = provider === 'google' ? 'Google' : 'GitHub';
+    if (btn) btn.disabled = true;
+    status.textContent = `signing in via ${label} …`;
+    status.style.color = 'var(--ink-mute)';
+    try {
+      if (!window._firebaseOAuth) throw new Error('firebase not loaded');
+      const cred = await window._firebaseOAuth(provider);
+      status.textContent = `registering with codeium … (${label})`;
+      const r = await this.api('POST', '/oauth-login', { idToken: cred.idToken, refreshToken: cred.refreshToken, email: cred.email, provider: cred.provider, autoAdd: true });
+      if (r.error) throw new Error(r.error);
+      status.style.color = 'var(--good)';
+      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> logged in as ${r.email || label}`;
+      this.toast(`${label} login OK`, 'success');
+      this.loadAccounts();
+      this.pushLoginHistory({ time: new Date().toISOString(), email: r.email || label, proxy: 'direct', status: 'success', method: label });
+    } catch (err) {
+      status.style.color = 'var(--error)';
+      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${this.esc(err.message)}`;
+      this.toast(`${label} login failed: ${err.message}`, 'error');
+    } finally { if (btn) btn.disabled = false; }
+  },
+
+  getWindsurfLoginProxy() {
+    const proxyHost = document.getElementById('wl-proxy-host').value.trim();
+    return proxyHost ? {
+      type: document.getElementById('wl-proxy-type').value,
+      host: proxyHost,
+      port: parseInt(document.getElementById('wl-proxy-port').value) || 8080,
+      username: document.getElementById('wl-proxy-user').value,
+      password: document.getElementById('wl-proxy-pass').value,
+    } : null;
+  },
+  proxyLabel(p) { return p ? `${p.type}://${p.host}:${p.port}` : 'direct'; },
+
+  pushLoginHistory(entry) { this.pushLoginHistoryEntries([entry]); },
+  pushLoginHistoryEntries(entries) {
+    for (let i = entries.length - 1; i >= 0; i--) this.loginHistory.unshift(entries[i]);
+    if (this.loginHistory.length > 50) this.loginHistory.length = 50;
+    localStorage.setItem('wl_history', JSON.stringify(this.loginHistory));
+    this.renderLoginHistory();
+  },
+  removeLoginHistory(idx) { this.loginHistory.splice(idx, 1); localStorage.setItem('wl_history', JSON.stringify(this.loginHistory)); this.renderLoginHistory(); },
+
+  showWLResult(html) {
+    const rd = document.getElementById('wl-result');
+    rd.classList.remove('hidden');
+    rd.innerHTML = html;
+  },
+
+  async windsurfLogin() {
+    const email = document.getElementById('wl-email').value.trim();
+    const password = document.getElementById('wl-password').value.trim();
+    if (!email || !password) return this.toast('email + password required', 'error');
+    const proxy = this.getWindsurfLoginProxy();
+    const autoAdd = document.getElementById('wl-auto-add').checked;
+    const btn = document.getElementById('wl-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> logging in …';
+    const entry = { time: new Date().toISOString(), email, proxy: this.proxyLabel(proxy), status: 'pending' };
+    try {
+      const r = await this.api('POST', '/windsurf-login', { email, password, proxy, autoAdd });
+      if (r.success) {
+        entry.status = 'success';
+        entry.apiKey = r.apiKey_masked || (r.apiKey?.slice(0,16) + '…');
+        this.showWLResult(`<div class="anno" style="color:var(--good);font-size:20px"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> login OK</div>
+          <table style="margin-top:12px">
+            <tr><td class="text-mute">email</td><td>${this.esc(r.email)}</td></tr>
+            <tr><td class="text-mute">name</td><td>${this.esc(r.name || '-')}</td></tr>
+            <tr><td class="text-mute">api key</td><td><code class="break-all">${this.esc(r.apiKey_masked || r.apiKey || '')}</code></td></tr>
+          </table>`);
+        this.toast(autoAdd ? 'login OK · added to pool' : 'login OK', 'success');
+        this.loadAccounts();
+      } else {
+        entry.status = 'error: ' + (r.error || 'unknown');
+        this.showWLResult(`<div class="anno" style="color:var(--error);font-size:20px"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> login failed</div><p class="text-sm">${this.esc(r.error || 'unknown')}</p>`);
+        this.toast(r.error || 'login failed', 'error');
+      }
+    } catch (err) {
+      entry.status = 'error: ' + err.message;
+      this.toast(err.message, 'error');
+    }
+    this.pushLoginHistory(entry);
+    btn.disabled = false;
+    btn.innerHTML = `登录取号 <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+  },
+
+  async testLoginProxy() {
+    const host = document.getElementById('wl-proxy-host').value.trim();
+    const port = parseInt(document.getElementById('wl-proxy-port').value) || 0;
+    const out = document.getElementById('wl-proxy-test-result');
+    const btn = document.getElementById('wl-proxy-test-btn');
+    if (!host || !port) { if (out) { out.textContent = '请填 host + port'; out.style.color = 'var(--error)'; } return; }
+    const type = document.getElementById('wl-proxy-type').value;
+    const username = document.getElementById('wl-proxy-user').value.trim();
+    const password = document.getElementById('wl-proxy-pass').value;
+    if (btn) btn.disabled = true;
+    if (out) { out.textContent = 'testing…'; out.style.color = 'var(--ink-mute)'; }
+    try {
+      const r = await this.api('POST', '/test-proxy', { host, port, username, password, type });
+      if (out) {
+        if (r.ok) {
+          out.textContent = `OK · egress ${r.egressIp || '?'} · ${r.latencyMs || 0}ms`;
+          out.style.color = 'var(--good)';
+        } else {
+          out.textContent = `failed: ${r.error || 'unknown'}`;
+          out.style.color = 'var(--error)';
+        }
+      }
+    } catch (e) {
+      if (out) { out.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ` + this.esc(e.message); out.style.color = 'var(--error)'; }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  async pasteWindsurfBatch() {
+    const el = document.getElementById('wl-batch-input');
+    if (!navigator.clipboard) { el?.focus(); return this.toast('clipboard unsupported', 'info'); }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return this.toast('clipboard empty', 'info');
+      el.value = text;
+      this.toast('pasted', 'success');
+    } catch (err) { this.toast('clipboard error: ' + err.message, 'error'); }
+  },
+
+  async windsurfLoginBatch() {
+    const input = document.getElementById('wl-batch-input').value;
+    if (!input.trim()) return this.toast('paste accounts first', 'error');
+    const autoAdd = document.getElementById('wl-auto-add').checked;
+    const btn = document.getElementById('wl-batch-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> importing …';
+    try {
+      const r = await this.api('POST', '/batch-import', { text: input, autoAdd });
+      if (!r.success || !Array.isArray(r.results)) {
+        this.toast(r.error || 'batch failed', 'error'); return;
+      }
+      this.showWLResult(`<div class="anno" style="font-size:20px">batch · ${r.successCount || 0} ok / ${r.failCount || 0} fail</div>
+        <div class="table-wrap" style="margin-top:12px"><table>
+          <thead><tr><th>email</th><th>status</th><th>note</th></tr></thead>
+          <tbody>${r.results.map(x => `<tr><td>${this.esc(x.email || '-')}</td>
+            <td><span class="badge ${x.success ? 'active' : 'error'}">${x.success ? 'ok' : 'fail'}</span></td>
+            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--error)">${this.esc(x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
+        </table></div>`);
+      this.pushLoginHistoryEntries(r.results.map(x => ({ time: new Date().toISOString(), email: x.email, proxy: 'batch', status: x.success ? 'success' : 'error: ' + (x.error || 'unknown'), apiKey: x.success ? x.apiKey_masked : undefined })));
+      this.toast(`batch · ${r.successCount || 0} ok / ${r.failCount || 0} fail`);
+      if ((r.successCount || 0) > 0) { this.loadAccounts(); document.getElementById('wl-batch-input').value = ''; }
+    } catch (err) { this.toast(err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = '批量导入'; }
+  },
+
+  renderLoginHistory() {
+    const tbody = document.querySelector('#wl-history-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = this.loginHistory.map((h, i) => {
+      const ok = h.status === 'success';
+      return `<tr>
+        <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
+        <td><span style="display:inline-flex;align-items:center;gap:8px"><span class="avatar-letter">${this.esc((h.email || '?')[0].toUpperCase())}</span>${this.esc(h.email)}</span></td>
+        <td><span class="badge ${ok ? 'active' : 'error'}">${ok ? 'ok' : 'fail'}</span>${!ok ? `<div class="text-xs" style="color:var(--error);margin-top:3px">${this.esc((h.status||'').replace('error: ',''))}</div>` : ''}</td>
+        <td class="text-sm">${this.esc(h.proxy || '-')}</td>
+        <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">×</button></td>
+      </tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="5">no history yet — sign in above ↑</td></tr>`;
+  },
+
+  /* ── accounts ── */
+  async _ensureModelsCatalog() {
+    if (this._modelsCatalog) return this._modelsCatalog;
+    try { const r = await this.api('GET', '/models'); this._modelsCatalog = {}; for (const m of (r.models || [])) this._modelsCatalog[m.id] = m; }
+    catch { this._modelsCatalog = {}; }
+    return this._modelsCatalog;
+  },
+
+  async loadAccounts() {
+    const [d, ov] = await Promise.all([
+      this.api('GET', '/accounts'),
+      this.api('GET', '/overview').catch(() => null),
+    ]);
+    const instances = ov?.langServer?.instances || [];
+    const poolCard = document.getElementById('ls-pool-card');
+    if (poolCard) {
+      if (instances.length > 0) {
+        poolCard.innerHTML = `<div class="section">
+          <div class="section-head"><div><div class="section-title"><span class="num">L</span><span>language server pool</span></div>
+            <div class="section-desc">${instances.length} instance(s)</div></div></div>
+          <div class="ls-pool">${instances.map(i => `<div class="ls-inst">
+            <div class="ls-key"><span class="ls-dot ${i.ready ? '' : 'pending'}"></span>${this.esc(i.key === 'default' ? 'default' : i.key.replace(/^px_/, ''))}</div>
+            <div class="ls-meta">port ${i.port} · pid ${i.pid || '-'}</div>
+            <div class="ls-meta">${this.esc(i.proxy || 'no proxy')}</div>
+          </div>`).join('')}</div></div>`;
+      } else { poolCard.innerHTML = ''; }
+    }
+
+    const tbody = document.querySelector('#accounts-table tbody');
+    const tierLabel = { pro: 'PRO', free: 'FREE', expired: 'EXP', unknown: '?' };
+    tbody.innerHTML = (d.accounts || []).map(a => {
+      const tier = a.tier || 'unknown';
+      const tierModels = a.tierModels || [];
+      const blockedCount = (a.blockedModels || []).length;
+      const availCount = tierModels.length - blockedCount;
+      const capsHtml = tierModels.length
+        ? `<button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escAttr(a.id)}')" title="edit">
+             <span style="color:var(--good);font-weight:600">${availCount}</span><span class="text-mute">/${tierModels.length}</span>
+             ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">−${blockedCount}</span>` : ''}
+           </button>`
+        : `<span class="text-xs text-dim">—</span>`;
+
+      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">RL</span>` : '';
+      const rpmUsed = a.rpmUsed ?? 0, rpmLimit = a.rpmLimit ?? 0;
+      const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
+      const rpmKind = rpmPct >= 90 ? 'error' : rpmPct >= 60 ? 'warn' : 'good';
+      const rpmCell = rpmLimit > 0
+        ? `<div style="min-width:80px"><div class="text-xs" style="display:flex;justify-content:space-between;margin-bottom:2px"><span>${rpmUsed}/${rpmLimit}</span><span>${rpmPct}%</span></div><div class="bar" style="height:5px"><div class="bar-fill ${rpmKind}" style="width:${rpmPct}%"></div></div></div>`
+        : `<span class="text-xs text-dim">—</span>`;
+
+      const cr = a.credits || null;
+      let creditCell;
+      if (!cr) creditCell = `<span class="text-xs text-dim italic">unfetched</span>`;
+      else if (cr.lastError && cr.percent == null && !cr.prompt?.limit) creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">fetch failed</span>`;
+      else {
+        const planName = cr.planName || '-';
+        const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm' : '-';
+        const renderBar = (lbl, pct) => {
+          if (pct == null) return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 32px"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px"><div class="bar-fill"></div></div><span class="b-pct text-dim">—</span></div>`;
+          const v = Math.max(0, Math.min(100, pct));
+          const k = v <= 10 ? 'error' : v <= 30 ? 'warn' : 'good';
+          return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 32px"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px"><div class="bar-fill ${k}" style="width:${v}%"></div></div><span class="b-pct">${v.toFixed(0)}%</span></div>`;
+        };
+        creditCell = `<div style="min-width:130px"><div class="text-xs" style="margin-bottom:3px"><b>${this.esc(planName.slice(0,12))}</b> <span class="text-mute">${fetchedAgo}</span></div>${renderBar('D', cr.dailyPercent)}${renderBar('W', cr.weeklyPercent)}</div>`;
+      }
+      const isExpanded = this._expandedAccounts.has(a.id);
+      return `<tr${isExpanded ? ' class="expanded"' : ''}>
+        <td><button class="expand-chev ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></button><code>${this.esc((a.id||'').slice(0,12))}</code></td>
+        <td>${this.esc(a.email)}</td>
+        <td><span class="tier ${this.esc(tier)}" onclick="App.overrideTier('${this.escAttr(a.id)}','${this.escAttr(tier)}')">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ' + `<svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>` : ''}</span></td>
+        <td>${rpmCell}</td>
+        <td>${creditCell}</td>
+        <td>${capsHtml}</td>
+        <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
+        <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'};font-family:'JetBrains Mono',monospace">${a.errorCount}</td>
+        <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '—'}</td>
+        <td class="nowrap"><code style="cursor:pointer" title="copy" onclick="App.copyKey('${this.escAttr(a.apiKey)}')">${this.esc(a.keyPrefix)}</code></td>
+        <td class="nowrap"><div class="btn-group">
+          <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escAttr(a.id)}')">probe</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+          ${a.status === 'active'
+            ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','disabled')">disable</button>`
+            : `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','active')">enable</button>`}
+          <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escAttr(a.id)}')">reset</button>
+          <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escAttr(a.id)}')">×</button>
+        </div></td>
+      </tr>${isExpanded ? `<tr class="detail-row"><td colspan="11">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
+    }).join('') || `<tr class="empty-row"><td colspan="11">no accounts yet · paste a key above ↑ or grab one from /windsurf-login</td></tr>`;
+  },
+
+  toggleAccountDetail(id) {
+    if (this._expandedAccounts.has(id)) { this._expandedAccounts.delete(id); this.loadAccounts(); }
+    else { this._expandedAccounts.add(id); this._ensureModelsCatalog().then(() => this.loadAccounts()); }
+  },
+
+  renderAccountDetail(a) {
+    const cr = a.credits || {};
+    const us = a.userStatus || {};
+    const catalog = this._modelsCatalog || {};
+    const fmtUnix = u => u ? new Date(u * 1000).toLocaleString() : '—';
+    const fmtDate = v => v ? new Date(v).toLocaleDateString() : '—';
+    const fmtAgo = ts => {
+      if (!ts) return '—';
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s/60)}m ago`;
+      if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+      return `${Math.floor(s/86400)}d ago`;
+    };
+    const renderBar = (lbl, pct, resetAt, naText) => {
+      const isN = pct == null;
+      const v = isN ? 0 : Math.max(0, Math.min(100, pct));
+      const k = isN ? '' : v <= 10 ? 'error' : v <= 30 ? 'warn' : 'good';
+      return `<div class="detail-bar"><span class="b-label">${lbl}</span><div class="bar"><div class="bar-fill ${k}" style="width:${v}%"></div></div><span class="b-pct">${isN ? '—' : v.toFixed(0)+'%'}</span>${resetAt ? `<div class="b-reset"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 9A9 9 0 1 1 5.64 5.64L23 10"/></svg> reset ${fmtUnix(resetAt)}</div>` : (isN && naText ? `<div class="b-reset">${naText}</div>` : '')}</div>`;
+    };
+
+    const tierModels = a.tierModels || [];
+    const blocked = new Set(a.blockedModels || []);
+    const provOf = (m) => {
+      if (m.startsWith('claude')) return 'anthropic';
+      if (m.startsWith('gpt') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
+      if (m.startsWith('gemini')) return 'google';
+      if (m.startsWith('grok')) return 'xai';
+      if (m.startsWith('deepseek')) return 'deepseek';
+      if (m.startsWith('qwen')) return 'alibaba';
+      if (m.startsWith('kimi')) return 'moonshot';
+      if (m.startsWith('swe') || m.startsWith('arena')) return 'windsurf';
+      return 'other';
+    };
+    const provLabel = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', xai: 'xAI', alibaba: 'Alibaba', moonshot: 'Moonshot', zhipu: 'Zhipu', minimax: 'MiniMax', windsurf: 'Windsurf', other: 'Other' };
+    const groups = {};
+    for (const m of tierModels) {
+      const info = catalog[m] || {};
+      const p = info.provider || provOf(m);
+      (groups[p] = groups[p] || []).push({ id: m, ...info });
+    }
+    const availCount = tierModels.length - blocked.size;
+    let trialDaysLeft = null;
+    if (us.trialEndMs) trialDaysLeft = Math.max(0, Math.ceil((us.trialEndMs - Date.now()) / 86400000));
+
+    return `<div class="detail-wrap">
+      <div class="detail-grid">
+        <div class="detail-card">
+          <div class="detail-card-head"><span class="num-circle">P</span>plan</div>
+          <div class="detail-kv">
+            <span class="k">name</span><span class="v"><b>${this.esc(cr.planName || us.planName || '—')}</b></span>
+            <span class="k">tier</span><span class="v"><span class="tier ${this.esc(a.tier || 'unknown')}">${this.esc(a.tier || 'unknown')}</span>${a.tierManual ? ' <span class="text-mute text-xs"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> manual</span>' : ''}</span>
+            <span class="k">start</span><span class="v">${fmtDate(cr.planStart || us.planStart)}</span>
+            <span class="k">end</span><span class="v">${fmtDate(cr.planEnd || us.planEnd)}${trialDaysLeft != null ? ` <span style="color:${trialDaysLeft <= 3 ? 'var(--error)' : 'var(--ink-mute)'}">(${trialDaysLeft}d)</span>` : ''}</span>
+            ${cr.overageBalance != null ? `<span class="k">overage</span><span class="v">$${cr.overageBalance.toFixed(4)}</span>` : ''}
+          </div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-head"><span class="num-circle">Q</span>quota</div>
+          ${renderBar('daily', cr.dailyPercent, cr.dailyResetAt, 'no daily quota data')}
+          ${renderBar('weekly', cr.weeklyPercent, cr.weeklyResetAt, 'no weekly quota data')}
+          <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--rule-soft)" class="detail-kv">
+            ${cr.prompt?.limit ? `<span class="k">prompt</span><span class="v"><b>${cr.prompt.remaining ?? 0}</b> / ${cr.prompt.limit} <span class="text-mute text-xs">used ${cr.prompt.used ?? 0}</span></span>` : `<span class="k">prompt</span><span class="v text-mute">N/A</span>`}
+            ${cr.flex?.limit ? `<span class="k">flex</span><span class="v"><b>${cr.flex.remaining ?? 0}</b> / ${cr.flex.limit}</span>` : `<span class="k">flex</span><span class="v text-mute">N/A</span>`}
+            <span class="k">fetched</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
+          </div>
+        </div>
+
+        <div class="detail-card" style="grid-column:1/-1">
+          <div class="detail-card-head"><span class="num-circle">M</span>models <span class="text-mute text-xs" style="font-style:normal;font-family:'JetBrains Mono',monospace">${availCount} / ${tierModels.length} available${blocked.size > 0 ? ` · ${blocked.size} blocked` : ''}</span><div style="margin-left:auto"><button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escAttr(a.id)}')">edit</button></div></div>
+          ${tierModels.length === 0 ? `<div class="text-mute italic" style="padding:6px 0">no allowed models — run probe</div>` : Object.entries(groups).map(([p, ms]) => {
+            ms.sort((x,y) => (x.credit||0)-(y.credit||0));
+            const blockedIn = ms.filter(m => blocked.has(m.id)).length;
+            return `<div class="provider-group">
+              <div class="provider-label"><span>${this.esc(provLabel[p] || p)}</span><span class="text-xs text-mute" style="font-family:'JetBrains Mono',monospace">${ms.length-blockedIn}/${ms.length}</span></div>
+              <div class="model-chips">${ms.map(m => `<div class="model-chip ${blocked.has(m.id) ? 'blocked' : ''}" title="${m.id}"><span>${this.esc(m.id)}</span>${m.credit != null ? `<span style="color:var(--accent);font-weight:600">${m.credit}c</span>` : ''}</div>`).join('')}</div>
+            </div>`;
+          }).join('')}
+        </div>
+
+        <div class="detail-card" style="grid-column:1/-1">
+          <div class="detail-card-head"><span class="num-circle">R</span>runtime</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px">
+            <div class="detail-kv">
+              <span class="k">status</span><span class="v"><span class="badge ${a.status}">${a.status}</span></span>
+              <span class="k">errors</span><span class="v" style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount || 0}</span>
+              <span class="k">rpm</span><span class="v">${a.rpmUsed ?? 0} / ${a.rpmLimit ?? 0}</span>
+            </div>
+            <div class="detail-kv">
+              <span class="k">last used</span><span class="v">${fmtAgo(a.lastUsed)}</span>
+              <span class="k">last probe</span><span class="v">${fmtAgo(a.lastProbed || a.userStatusLastFetched)}</span>
+              <span class="k">credits @</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
+            </div>
+            <div class="detail-kv">
+              <span class="k">id</span><span class="v"><code>${this.esc(a.id)}</code></span>
+              <span class="k">key</span><span class="v"><code style="cursor:pointer" onclick="App.copyKey('${this.escAttr(a.apiKey)}')">${this.esc(a.keyPrefix)}</code></span>
+              ${cr.lastError ? `<span class="k">last err</span><span class="v" style="color:var(--error);font-size:11px">${this.esc(cr.lastError).slice(0,80)}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  copyKey(k) { navigator.clipboard?.writeText(k).then(() => this.toast('copied', 'success')); },
+
+  async refreshCredits(id) { try { const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {}); if (r.ok) { this.toast('credits refreshed'); this.loadAccounts(); } else this.toast(r.error || 'fail', 'error'); } catch (e) { this.toast(e.message, 'error'); } },
+  async refreshAllCredits() { this.toast('refreshing all …', 'info'); try { const r = await this.api('POST', '/accounts/refresh-credits', {}); if (r.success) { this.toast(`${(r.results||[]).filter(x=>x.ok).length} refreshed`); this.loadAccounts(); } } catch (e) { this.toast(e.message, 'error'); } },
+  async probeAll() { this.toast('probing all …', 'info'); try { const r = await this.api('POST', '/accounts/probe-all', {}); if (r.success) { this.toast('probe done'); this.loadAccounts(); } } catch (e) { this.toast(e.message, 'error'); } },
+  async probeAccount(id) { this.toast('probing …', 'info'); try { const r = await this.api('POST', `/accounts/${id}/probe`, {}); if (r.success) { this.toast(`tier: ${r.tier}`); this.loadAccounts(); } } catch (e) { this.toast(e.message, 'error'); } },
+
+  async openBlockedModal(id) {
+    try {
+      const d = await this.api('GET', '/accounts');
+      const acct = (d.accounts || []).find(a => a.id === id);
+      if (!acct) return this.toast('account not found', 'error');
+      const tierModels = acct.tierModels || [];
+      const blocked = new Set(acct.blockedModels || []);
+      if (!tierModels.length) return this.toast('no models', 'info');
+      const provOf = (m) => {
+        if (m.startsWith('claude')) return 'anthropic';
+        if (m.startsWith('gpt') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
+        if (m.startsWith('gemini')) return 'google';
+        if (m.startsWith('grok')) return 'xai';
+        if (m.startsWith('deepseek')) return 'deepseek';
+        if (m.startsWith('qwen')) return 'alibaba';
+        if (m.startsWith('kimi')) return 'moonshot';
+        if (m.startsWith('swe') || m.startsWith('arena')) return 'windsurf';
+        return 'other';
+      };
+      const groups = {};
+      for (const m of tierModels) (groups[provOf(m)] = groups[provOf(m)] || []).push(m);
+      const total = tierModels.length;
+      const html = `
+        <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;padding:8px 12px;background:var(--paper-3);border:1px dashed var(--rule-soft)">
+          <div class="anno">tick = enabled</div>
+          <div>enabled <span id="bm-avail" style="color:var(--good);font-weight:600">${total - blocked.size}</span> <span class="text-mute">/ ${total}</span></div>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button class="btn btn-ghost btn-xs" onclick="App.bmAll(true)">all</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.bmAll(false)">none</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.bmInvert()">invert</button>
+        </div>
+        <div style="max-height:50vh;overflow:auto">${Object.entries(groups).map(([p, ms]) => `
+          <div class="bm-group" data-provider="${p}" style="margin-bottom:14px;border:1px solid var(--rule-faint);padding:10px">
+            <label class="checkbox" style="font-family:'Caveat',cursive;font-size:17px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px dashed var(--rule-soft);display:flex;width:100%">
+              <input type="checkbox" class="bm-group-cb" data-provider="${p}"><span class="box-mark"></span>
+              <span style="font-weight:600">${this.esc(p)}</span>
+              <span class="text-xs text-mute" data-role="count" style="margin-left:auto;font-family:'JetBrains Mono',monospace">${ms.filter(m => !blocked.has(m)).length}/${ms.length}</span>
+            </label>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 10px">
+              ${ms.map(m => `<label class="checkbox"><input type="checkbox" class="blocked-model-cb" data-model="${this.esc(m)}" data-provider="${p}" ${blocked.has(m) ? '' : 'checked'}><span class="box-mark"></span><span class="mono text-xs">${this.esc(m)}</span></label>`).join('')}
+            </div>
+          </div>`).join('')}</div>`;
+      this.confirm(`models · ${acct.email}`, html, { okText: 'save', html: true, wide: true });
+      setTimeout(() => this._bindBlockedModal(id), 0);
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  _bindBlockedModal(accountId) {
+    const root = document.querySelector('.modal-overlay:last-child');
+    if (!root) return;
+    const updateGroup = (p) => {
+      const g = root.querySelector(`.bm-group[data-provider="${p}"]`);
+      if (!g) return;
+      const boxes = g.querySelectorAll('.blocked-model-cb');
+      const checked = [...boxes].filter(b => b.checked).length;
+      const gcb = g.querySelector('.bm-group-cb');
+      gcb.checked = checked === boxes.length;
+      gcb.indeterminate = checked > 0 && checked < boxes.length;
+      g.querySelector('[data-role=count]').textContent = `${checked}/${boxes.length}`;
+    };
+    const updateTotal = () => {
+      const all = root.querySelectorAll('.blocked-model-cb');
+      const checked = [...all].filter(b => b.checked).length;
+      const el = root.querySelector('#bm-avail'); if (el) el.textContent = checked;
+    };
+    root.querySelectorAll('.bm-group').forEach(g => updateGroup(g.dataset.provider));
+    updateTotal();
+    root.querySelectorAll('.blocked-model-cb').forEach(cb => cb.addEventListener('change', () => { updateGroup(cb.dataset.provider); updateTotal(); }));
+    root.querySelectorAll('.bm-group-cb').forEach(gcb => gcb.addEventListener('change', () => {
+      root.querySelectorAll(`.blocked-model-cb[data-provider="${gcb.dataset.provider}"]`).forEach(cb => cb.checked = gcb.checked);
+      updateGroup(gcb.dataset.provider); updateTotal();
+    }));
+    const okBtn = root.querySelector('[data-act=ok]');
+    if (!okBtn || okBtn.dataset.bound) return;
+    okBtn.dataset.bound = '1';
+    const self = this;
+    okBtn.onclick = async () => {
+      const newBlocked = [];
+      root.querySelectorAll('.blocked-model-cb').forEach(cb => { if (!cb.checked) newBlocked.push(cb.dataset.model); });
+      okBtn.disabled = true; okBtn.textContent = 'saving …';
+      try {
+        const r = await self.api('PATCH', `/accounts/${accountId}`, { blockedModels: newBlocked });
+        if (r.success) { self.toast('saved'); root.remove(); self.loadAccounts(); }
+        else { self.toast(r.error || 'save failed', 'error'); okBtn.disabled = false; okBtn.textContent = 'save'; }
+      } catch (e) { self.toast(e.message, 'error'); okBtn.disabled = false; okBtn.textContent = 'save'; }
+    };
+  },
+  bmAll(checked) { const root = document.querySelector('.modal-overlay:last-child'); if (!root) return; root.querySelectorAll('.blocked-model-cb').forEach(cb => { cb.checked = checked; cb.dispatchEvent(new Event('change')); }); },
+  bmInvert() { const root = document.querySelector('.modal-overlay:last-child'); if (!root) return; root.querySelectorAll('.blocked-model-cb').forEach(cb => { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }); },
+
+  async addAccount() {
+    const type = document.getElementById('acc-type').value;
+    const key = document.getElementById('acc-key').value.trim();
+    const label = document.getElementById('acc-label').value.trim();
+    if (!key) return this.toast('paste key or token', 'error');
+    const body = type === 'api_key' ? { api_key: key, label } : { token: key, label };
+    const r = await this.api('POST', '/accounts', body);
+    if (r.success) { this.toast('account added'); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
+    else this.toast(r.error || 'add failed', 'error');
+  },
+  async toggleAccount(id, status) { await this.api('PATCH', `/accounts/${id}`, { status }); this.loadAccounts(); },
+  async overrideTier(id, current) {
+    const v = await this.prompt('override tier', `current: ${current}`, [{ name: 'tier', label: 'tier', type: 'select', value: current, options: [{ value: 'pro', label: 'pro' }, { value: 'free', label: 'free' }, { value: 'unknown', label: 'unknown' }] }]);
+    if (!v) return;
+    await this.api('PATCH', `/accounts/${id}`, { tier: v.tier });
+    this.toast('tier set'); this.loadAccounts();
+  },
+  async resetErrors(id) { await this.api('PATCH', `/accounts/${id}`, { resetErrors: true }); this.loadAccounts(); this.toast('errors reset'); },
+  async deleteAccount(id) {
+    const ok = await this.confirm('delete account?', 'this cannot be undone', { danger: true, okText: 'delete' });
+    if (!ok) return;
+    await this.api('DELETE', `/accounts/${id}`);
+    this.loadAccounts(); this.toast('deleted');
+  },
+
+  /* ── models ── */
+  async loadModels() {
+    const [m, a] = await Promise.all([this.api('GET', '/models'), this.api('GET', '/model-access')]);
+    this.allModels = m.models || [];
+    this.modelAccessConfig = a.mode ? a : { mode: 'all', list: [] };
+    document.querySelector(`input[name="model-mode"][value="${this.modelAccessConfig.mode}"]`).checked = true;
+    const sel = document.getElementById('model-provider-filter');
+    const provs = [...new Set(this.allModels.map(x => x.provider))].sort();
+    sel.innerHTML = '<option value="">all providers</option>' + provs.map(p => `<option>${this.esc(p)}</option>`).join('');
+    this.updateModelListUI();
+  },
+  updateModelListUI() {
+    const sec = document.getElementById('model-list-section');
+    if (this.modelAccessConfig.mode === 'all') { sec.classList.add('hidden'); return; }
+    sec.classList.remove('hidden');
+    const isAllow = this.modelAccessConfig.mode === 'allowlist';
+    document.getElementById('model-list-title').textContent = isAllow ? 'allow list — only these models' : 'block list — these models are denied';
+    document.getElementById('model-list-hint').textContent = isAllow ? 'click chips below to allow them' : 'click chips below to block them';
+    const current = this.modelAccessConfig.list;
+    const cont = document.getElementById('model-list-current');
+    cont.innerHTML = current.length
+      ? `<div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escAttr(m)}')">×</span></span>`).join('')}</div>`
+      : `<div class="text-xs text-dim italic">empty</div>`;
+    this.filterModels();
+  },
+  filterModels() {
+    const search = (document.getElementById('model-search')?.value || '').toLowerCase();
+    const provider = document.getElementById('model-provider-filter')?.value || '';
+    const list = this.modelAccessConfig.list;
+    const grouped = {};
+    for (const m of this.allModels) {
+      if (search && !m.name.toLowerCase().includes(search) && !m.provider.toLowerCase().includes(search)) continue;
+      if (provider && m.provider !== provider) continue;
+      (grouped[m.provider] = grouped[m.provider] || []).push(m);
+    }
+    document.getElementById('model-chips-container').innerHTML = Object.entries(grouped).map(([p, ms]) => `
+      <div class="provider-group">
+        <div class="provider-label">${this.esc(p)}</div>
+        <div class="model-chips">${ms.map(m => `<span class="model-chip ${list.includes(m.id) ? 'selected' : ''}" onclick="App.toggleModelInList('${this.escAttr(m.id)}')">${this.esc(m.name)}</span>`).join('')}</div>
+      </div>`).join('') || '<div class="text-mute italic">no matches</div>';
+  },
+  async setModelMode(mode) { await this.api('PUT', '/model-access', { mode }); this.modelAccessConfig.mode = mode; this.updateModelListUI(); this.toast('mode updated'); },
+  async toggleModelInList(id) {
+    const idx = this.modelAccessConfig.list.indexOf(id);
+    if (idx > -1) { await this.api('POST', '/model-access/remove', { model: id }); this.modelAccessConfig.list.splice(idx, 1); }
+    else { await this.api('POST', '/model-access/add', { model: id }); this.modelAccessConfig.list.push(id); }
+    this.updateModelListUI();
+  },
+  async removeModelFromList(id) { await this.api('POST', '/model-access/remove', { model: id }); this.modelAccessConfig.list = this.modelAccessConfig.list.filter(x => x !== id); this.updateModelListUI(); },
+
+  /* ── proxy ── */
+  async loadProxy() {
+    const d = await this.api('GET', '/proxy');
+    if (d.global) {
+      document.getElementById('proxy-type').value = d.global.type || 'http';
+      document.getElementById('proxy-host').value = (d.global.host || '').replace(/:\d+$/, '');
+      document.getElementById('proxy-port').value = d.global.port || '';
+      document.getElementById('proxy-user').value = d.global.username || '';
+      document.getElementById('proxy-pass').value = '';
+      document.getElementById('proxy-pass').placeholder = d.global.hasPassword ? '(saved)' : 'optional';
+      this._globalProxyHasPassword = !!d.global.hasPassword;
+      const h = (d.global.host || '').replace(/:\d+$/, '');
+      document.getElementById('proxy-current').textContent = `current: ${d.global.type}://${h}:${d.global.port}${d.global.username ? ' (auth: ' + d.global.username + ')' : ''}`;
+    } else {
+      document.getElementById('proxy-current').textContent = 'not configured';
+    }
+    const accts = await this.api('GET', '/accounts');
+    const tbody = document.querySelector('#proxy-accounts-table tbody');
+    const pa = d.perAccount || {};
+    tbody.innerHTML = (accts.accounts || []).map(a => {
+      const p = pa[a.id];
+      return `<tr>
+        <td>${this.esc(a.email)} <code class="text-xs">${this.esc(a.id)}</code></td>
+        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : `<span class="text-sm text-dim italic">none</span>`}</td>
+        <td class="nowrap"><div class="btn-group"><button class="btn btn-ghost btn-xs" onclick="App.editAccountProxy('${this.escAttr(a.id)}','${this.escAttr(a.email)}')">configure</button>${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escAttr(a.id)}')">clear</button>` : ''}</div></td>
+      </tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="3">no accounts yet</td></tr>`;
+  },
+  async saveGlobalProxy() {
+    const cfg = { type: document.getElementById('proxy-type').value, host: document.getElementById('proxy-host').value.trim(), port: document.getElementById('proxy-port').value, username: document.getElementById('proxy-user').value };
+    const pw = document.getElementById('proxy-pass').value;
+    if (pw || !this._globalProxyHasPassword) cfg.password = pw;
+    if (!cfg.host) return this.toast('enter host', 'error');
+    await this.api('PUT', '/proxy/global', cfg); this.toast('saved'); this.loadProxy();
+  },
+  async clearGlobalProxy() { await this.api('DELETE', '/proxy/global'); ['proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(id => document.getElementById(id).value = ''); this.toast('cleared'); this.loadProxy(); },
+  async editAccountProxy(id, label) {
+    const v = await this.prompt('configure proxy', `for ${label}`, [
+      { name: 'type', label: 'type', type: 'select', value: 'http', options: [{value:'http',label:'HTTP'},{value:'https',label:'HTTPS'},{value:'socks5',label:'SOCKS5'}] },
+      { name: 'host', label: 'host', placeholder: 'proxy.host' },
+      { name: 'port', label: 'port', type: 'number', placeholder: '8080' },
+      { name: 'username', label: 'username', placeholder: 'optional' },
+      { name: 'password', label: 'password', type: 'password', placeholder: 'optional' },
+    ]);
+    if (!v || !v.host) return;
+    await this.api('PUT', `/proxy/accounts/${id}`, { type: v.type || 'http', host: v.host, port: parseInt(v.port) || 8080, username: v.username || '', password: v.password || '' });
+    this.toast('saved'); this.loadProxy();
+  },
+  async clearAccountProxy(id) { await this.api('DELETE', `/proxy/accounts/${id}`); this.toast('cleared'); this.loadProxy(); },
+
+  /* ── logs ──
+     Uses fetch + X-Dashboard-Password header to align with the production
+     SSE contract (server expects header, payload shape `{ts, level, msg}`).
+     EventSource cannot set custom headers, so the original sketch wiring
+     (?token= query) silently failed against the real backend. */
+  loadLogs() {
+    if (this.sseConn) { try { this.sseConn.close(); } catch {} this.sseConn = null; }
+    this.logEntries = [];
+    const c = document.getElementById('log-container');
+    if (c) c.innerHTML = '';
+
+    const headers = { 'Accept': 'text/event-stream' };
+    if (this.password) headers['X-Dashboard-Password'] = this.password;
+    const controller = new AbortController();
+    this.sseConn = { close: () => controller.abort() };
+
+    fetch('/dashboard/api/logs/stream', { headers, signal: controller.signal })
+      .then(r => {
+        if (!r.ok || !r.body) throw new Error('SSE connect failed');
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        const pump = () => reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += dec.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const payload = frame.split('\n').filter(l => l.startsWith('data: ')).map(l => l.slice(6)).join('\n');
+            if (!payload) continue;
+            try { this.appendLog(JSON.parse(payload)); } catch {}
+          }
+          return pump();
+        });
+        return pump();
+      })
+      .catch(() => { /* silent — abort or transient */ });
+  },
+  appendLog(e) {
+    this.logEntries.push(e);
+    if (this.logEntries.length > 5000) this.logEntries.splice(0, this.logEntries.length - 5000);
+    this.renderLogEntry(e);
+  },
+  renderLogEntry(e) {
+    const lvl = (document.getElementById('log-level')?.value || '').toLowerCase();
+    const search = (document.getElementById('log-search')?.value || '').toLowerCase();
+    if (lvl && (e.level || '').toLowerCase() !== lvl) return;
+    // Production payload uses `msg`; sketch UI used to read `message`.
+    const text = e.msg || e.message || '';
+    if (search && !text.toLowerCase().includes(search)) return;
+    const c = document.getElementById('log-container');
+    if (!c) return;
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + (e.level || 'info').toLowerCase();
+    const ts = e.ts || e.time || Date.now();
+    div.innerHTML = `<span class="ts">${new Date(ts).toLocaleTimeString()}</span><span class="lvl">${this.esc((e.level || 'info').toUpperCase())}</span><span>${this.esc(text)}</span>`;
+    c.appendChild(div);
+    if (document.getElementById('log-tail')?.checked) c.scrollTop = c.scrollHeight;
+  },
+  applyLogFilter() {
+    const c = document.getElementById('log-container'); c.innerHTML = '';
+    this.logEntries.forEach(e => this.renderLogEntry(e));
+  },
+  clearLogs() { this.logEntries = []; document.getElementById('log-container').innerHTML = ''; },
+
+  /* ── stats ── */
+  async loadStats() {
+    /* Backend response: { totalRequests, successCount, errorCount, startedAt,
+       modelCounts: { [model]: { requests, success, errors, totalMs, avgMs, p50Ms, p95Ms } },
+       accountCounts: { [aid]: { requests, success, errors } },
+       hourlyBuckets: [ { hour, requests, errors } ] }.
+       Original sketch read r.hourly / r.models / r.accounts which were never sent. */
+    const r = await this.api('GET', '/stats');
+    const total = r.totalRequests || 0;
+    const success = r.successCount || 0;
+    const errors = r.errorCount || 0;
+    const successRate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0;
+
+    // Aggregate latency across models for the top card.
+    const modelEntries = Object.entries(r.modelCounts || {}).map(([model, s]) => ({
+      model,
+      requests: s.requests || 0,
+      success: s.success || 0,
+      errors: s.errors || 0,
+      successRate: s.requests > 0 ? Math.round((s.success / s.requests) * 1000) / 10 : 0,
+      avg: s.avgMs || 0,
+      p50: s.p50Ms || 0,
+      p95: s.p95Ms || 0,
+    })).sort((a, b) => b.requests - a.requests);
+    const grandTotalMs = Object.values(r.modelCounts || {}).reduce((n, s) => n + (s.totalMs || 0), 0);
+    const avgLatency = total > 0 ? Math.round(grandTotalMs / total) : 0;
+    const sortedP50 = modelEntries.map(m => m.p50).filter(Boolean).sort((a, b) => a - b);
+    const sortedP95 = modelEntries.map(m => m.p95).filter(Boolean).sort((a, b) => a - b);
+    const overallP50 = sortedP50.length ? sortedP50[Math.floor(sortedP50.length / 2)] : 0;
+    const overallP95 = sortedP95.length ? sortedP95[Math.floor(sortedP95.length * 0.95)] || sortedP95[sortedP95.length - 1] : 0;
+
+    document.getElementById('stats-cards').innerHTML = `
+      ${this.metric({ label: 'total requests', value: total, sub: '', kind: 'accent' })}
+      ${this.metric({ label: 'success', value: success, sub: `${successRate}%`, kind: 'good' })}
+      ${this.metric({ label: 'errors', value: errors, sub: '', kind: 'error' })}
+      ${this.metric({ label: 'avg latency', value: avgLatency + ' ms', sub: `p50 ${overallP50} · p95 ${overallP95}` })}
+    `;
+
+    // Hourly bucket bar strip — backend ships `hourlyBuckets[*].requests` not `count`.
+    // Slice window follows the segmented range radio: 24h / 7d / 30d.
+    const range = document.querySelector('#stats-range input[name=range]:checked')?.value || '24h';
+    const sliceN = range === '7d' ? 168 : range === '30d' ? 720 : 24;
+    const buckets = (r.hourlyBuckets || []).slice(-sliceN);
+    const maxV = Math.max(1, ...buckets.map(b => b.requests || 0));
+    document.getElementById('stats-bars').innerHTML = buckets.map(b => {
+      const h = ((b.requests || 0) / maxV) * 96;
+      const t = b.hour ? new Date(b.hour) : null;
+      const label = t
+        ? (range === '24h'
+            ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : t.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit' }))
+        : '';
+      return `<div class="bar-wrap"><div class="b-bar ${b.errors > 0 ? 'has-errors' : ''}" style="height:${h}%" title="${label} · ${b.requests || 0} req · ${b.errors || 0} err"></div></div>`;
+    }).join('') || '<div class="text-mute italic" style="margin:auto">no data yet</div>';
+
+    const tbody = document.querySelector('#model-stats-table tbody');
+    tbody.innerHTML = modelEntries.map(m => `<tr>
+      <td><code>${this.esc(m.model)}</code></td>
+      <td>${m.requests}</td><td>${m.success}</td><td>${m.errors}</td>
+      <td>${m.successRate}%</td>
+      <td>${m.avg} ms</td><td>${m.p50}</td><td>${m.p95}</td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="8">no model data yet</td></tr>`;
+
+    const accountEntries = Object.entries(r.accountCounts || {}).map(([id, s]) => ({
+      id,
+      requests: s.requests || 0,
+      success: s.success || 0,
+      errors: s.errors || 0,
+      successRate: s.requests > 0 ? Math.round((s.success / s.requests) * 1000) / 10 : 0,
+    })).sort((a, b) => b.requests - a.requests);
+    const tbody2 = document.querySelector('#account-stats-table tbody');
+    tbody2.innerHTML = accountEntries.map(a => `<tr>
+      <td><code>${this.esc(a.id.slice(0,8))}</code></td>
+      <td>${a.requests}</td><td>${a.success}</td><td>${a.errors}</td>
+      <td>${a.successRate}%</td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="5">no account data yet</td></tr>`;
+
+    // 30s auto-refresh — production UI keeps this running so the panel
+    // stays live without manual reload.
+    this.poll('stats', () => this.loadStats(), 30000);
+  },
+
+  async resetStats() {
+    const ok = await this.confirm('reset stats', 'This wipes all accumulated counters. Continue?', { okText: 'reset', danger: true });
+    if (!ok) return;
+    try {
+      await this.api('DELETE', '/stats');
+      this.toast('stats reset', 'success');
+      this.loadStats();
+    } catch (e) {
+      this.toast(e.message, 'error');
+    }
+  },
+
+  /* ── bans ── derive from /accounts; the sketch's original `/bans` 404'd. */
+  async loadBans() {
+    const d = await this.api('GET', '/accounts');
+    const accounts = d.accounts || [];
+    const errored = accounts.filter(a => a.status === 'error' || (a.errorCount || 0) > 0);
+    const rateLimited = accounts.filter(a => a.rateLimited);
+    const disabled = accounts.filter(a => a.status === 'error');
+    const healthy = accounts.length - errored.length;
+    document.getElementById('ban-cards').innerHTML = `
+      ${this.metric({ label: 'abnormal', value: errored.length, kind: 'error' })}
+      ${this.metric({ label: 'disabled', value: disabled.length, kind: 'warn' })}
+      ${this.metric({ label: 'rate-limited', value: rateLimited.length, kind: 'warn' })}
+      ${this.metric({ label: 'healthy', value: healthy, kind: 'good' })}
+    `;
+    const tbody = document.querySelector('#ban-table tbody');
+    tbody.innerHTML = accounts.map(a => {
+      const flagged = a.status === 'error' || (a.errorCount || 0) > 0;
+      return `<tr style="${flagged ? 'background:rgba(181,50,36,.04)' : ''}">
+        <td>${this.esc(a.email)} <code class="text-xs">${this.esc((a.id||'').slice(0,8))}</code></td>
+        <td><span class="badge ${a.status}">${a.status}</span></td>
+        <td style="color:${(a.errorCount||0) > 0 ? 'var(--error)' : 'inherit'};font-family:'JetBrains Mono',monospace">${a.errorCount || 0}</td>
+        <td class="text-sm">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '—'}</td>
+        <td><div class="btn-group">
+          ${(a.errorCount||0) > 0 ? `<button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escAttr(a.id)}')">reset</button>` : ''}
+          ${a.status === 'error' ? `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','active')">enable</button>` : ''}
+        </div></td>
+      </tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="5">all healthy</td></tr>`;
+    this.poll('bans', () => this.loadBans(), 30000);
+  },
+
+  /* ── experimental ──
+     Backend serves cascadeConversationReuse under `flags.*` and accepts
+     `PUT /experimental` for writes + `DELETE /experimental/conversation-pool`
+     for clearing. The original sketch wired PATCH and POST /clear-pool which
+     returned 404, so toggles silently reverted on next load. */
+  async loadExperimental() {
+    const r = await this.api('GET', '/experimental');
+    const flag = r.flags?.cascadeConversationReuse ?? r.cascadeConversationReuse;
+    const cb = document.getElementById('exp-cascade-reuse');
+    if (cb) cb.checked = !!flag;
+    const pool = r.conversationPool || {};
+    document.getElementById('exp-pool-cards').innerHTML = `
+      ${this.metric({ label: 'pool size', value: pool.size || 0 })}
+      ${this.metric({ label: 'hits', value: pool.hits || 0, kind: 'good' })}
+      ${this.metric({ label: 'misses', value: pool.misses || 0, kind: 'warn' })}
+      ${this.metric({ label: 'hit rate', value: (pool.hitRate || '0.0') + '%' })}
+    `;
+    // Reflect current skin cookie in the dropdown so reload state is visible.
+    const skinSel = document.getElementById('skin-select');
+    if (skinSel) {
+      const m = document.cookie.match(/(?:^|;\s*)dashboard_skin=([^;]+)/);
+      const cur = m ? decodeURIComponent(m[1]) : 'modern';
+      skinSel.value = (cur === 'sketch') ? 'sketch' : 'modern';
+    }
+    // System prompts editor — moved here so the experimental panel matches
+    // the production UI. Render is best-effort: if /system-prompts is gone
+    // (older backend) just hide the section silently.
+    await this.loadSystemPrompts();
+  },
+  async toggleExperimental(key, val) {
+    await this.api('PUT', '/experimental', { [key]: val });
+    this.toast(`${key}: ${val}`);
+    this.loadExperimental();
+  },
+  async clearConversationPool() {
+    await this.api('DELETE', '/experimental/conversation-pool');
+    this.toast('pool cleared');
+    this.loadExperimental();
+  },
+
+  /* ── system prompts editor — moved over from the production UI so the
+     experimental panel exposes the same prompt template controls. */
+  async loadSystemPrompts() {
+    const holder = document.getElementById('system-prompts-editor');
+    if (!holder) return;
+    const sp = await this.api('GET', '/system-prompts');
+    const prompts = sp?.prompts || {};
+    const keys = Object.keys(prompts);
+    if (!keys.length) {
+      holder.innerHTML = '<div class="text-mute italic">no editable prompts on this backend</div>';
+      return;
+    }
+    holder.innerHTML = keys.map(k => `
+      <div style="border:1px dashed var(--rule-soft);padding:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div><code style="color:var(--accent);font-weight:600">${this.esc(k)}</code></div>
+          <div class="field-row-actions" style="margin:0">
+            <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${this.escAttr(k)}')">reset</button>
+            <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${this.escAttr(k)}')">save</button>
+          </div>
+        </div>
+        <textarea id="sp-${this.esc(k)}" class="input mono" rows="3" style="width:100%;resize:vertical">${this.esc(prompts[k] || '')}</textarea>
+      </div>
+    `).join('');
+  },
+  async saveSystemPrompt(key) {
+    const ta = document.getElementById(`sp-${key}`);
+    if (!ta) return;
+    await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
+    this.toast(`${key} saved`);
+  },
+  async resetSystemPrompt(key) {
+    const ok = await this.confirm('reset prompt', `restore default for ${key}?`, { okText: 'reset' });
+    if (!ok) return;
+    await this.api('DELETE', `/system-prompts/${key}`);
+    this.toast(`${key} reset`);
+    this.loadExperimental();
+  },
+
+  /* ── credits page ── */
+  async loadCredits() {
+    /* Backend has no /credits endpoint (the production UI ships its
+       CONTRIBUTORS list inline). Try the call; if it 404s, fall back to
+       a thin pointer to the GitHub PR list. Sketch is the experimental
+       skin — full contributor cards are intentionally out of scope. */
+    const body = document.getElementById('credits-body');
+    if (!body) return;
+    let list = [];
+    try {
+      const r = await this.api('GET', '/credits');
+      list = Array.isArray(r?.contributors) ? r.contributors : [];
+    } catch {}
+    if (list.length) {
+      body.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">${list.map(c => `
+        <div style="display:flex;gap:14px;padding:12px;border:1px dashed var(--rule-soft)">
+          ${c.avatar ? `<img src="${this.esc(c.avatar)}" alt="" style="width:48px;height:48px;border-radius:50%;border:1.5px solid var(--ink)">` : `<span class="avatar-letter" style="width:48px;height:48px;font-size:22px">${this.esc((c.name||'?')[0].toUpperCase())}</span>`}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+              <a href="${this.esc(c.url)}" target="_blank" class="serif" style="font-size:18px;color:var(--ink);text-decoration:none">${this.esc(c.name)}</a>
+              <span class="text-mute text-xs">${c.mergedAt ? new Date(c.mergedAt).toLocaleDateString() : ''}</span>
+            </div>
+            <div style="margin-top:4px">${this.esc(c.title || '')}</div>
+            ${c.summary ? `<div class="text-mute text-sm mt-2">${this.esc(c.summary)}</div>` : ''}
+          </div>
+        </div>`).join('')}</div>`;
+      return;
+    }
+    body.innerHTML = `
+      <div style="padding:14px;border:1px dashed var(--rule-soft)">
+        <div class="serif" style="font-size:18px;margin-bottom:6px">Contributors</div>
+        <div class="text-mute text-sm" data-zh="完整贡献者名单在默认皮里展示。这里只放一个外链。" data-en="Full contributor cards live in the default skin. Sketch UI just links out.">完整贡献者名单在默认皮里展示。这里只放一个外链。</div>
+        <div style="margin-top:10px;display:flex;gap:14px;flex-wrap:wrap">
+          <a href="https://github.com/dwgx/WindsurfAPI/pulls?q=is%3Apr+is%3Amerged" target="_blank">Merged pull requests <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></a>
+          <a href="https://github.com/dwgx/WindsurfAPI/graphs/contributors" target="_blank">GitHub contributor graph <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></a>
+        </div>
+      </div>`;
+  },
+};
+
+document.addEventListener('DOMContentLoaded', () => App.init());
+</script>
+</body>
+</html>

@@ -2143,6 +2143,23 @@ window._firebaseOAuth = async function(provider) {
       </div>
       <div class="section-body" id="system-prompts-editor" style="display:grid;gap:14px"></div>
     </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.skin.title">界面风格</div>
+          <div class="section-desc" data-i18n="section.skin.desc">控制台外观。默认现代风；手绘草稿风是实验性 UI，部分功能简化或采用不同布局。切换后页面会刷新。</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div style="display:flex;align-items:center;gap:16px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <select id="skin-select" class="input" style="max-width:240px" onchange="App.switchSkin(this.value)">
+            <option value="modern" data-i18n="skin.modern">默认现代风</option>
+            <option value="sketch" data-i18n="skin.sketch">手绘草稿风（实验）</option>
+          </select>
+          <div class="text-sm text-muted" data-i18n="skin.hint">选择后立即写入 cookie 并刷新</div>
+        </div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -4524,6 +4541,13 @@ const App = {
     const d = await this.api('GET', '/experimental');
     const cb = document.getElementById('exp-cascade-reuse');
     if (cb) cb.checked = !!d.flags?.cascadeConversationReuse;
+    // Reflect current skin cookie in the dropdown so reload state is visible.
+    const skinSel = document.getElementById('skin-select');
+    if (skinSel) {
+      const m = document.cookie.match(/(?:^|;\s*)dashboard_skin=([^;]+)/);
+      const cur = m ? decodeURIComponent(m[1]) : 'modern';
+      skinSel.value = (cur === 'sketch') ? 'sketch' : 'modern';
+    }
     const pool = d.conversationPool || {};
     document.getElementById('exp-pool-cards').innerHTML = `
       <div class="card info">
@@ -4628,6 +4652,15 @@ const App = {
     const r = await this.api('DELETE', '/experimental/conversation-pool');
     this.toast(`${I18n.t('toast.cleared')} ${r.cleared || 0}`, 'success');
     this.loadExperimental();
+  },
+
+  // ─── Console skin (default ↔ experimental sketch UI) ────────
+  switchSkin(skin) {
+    const next = skin === 'sketch' ? 'sketch' : 'modern';
+    // Year-long cookie, lax samesite. path=/ so /dashboard sees it.
+    const oneYear = 365 * 24 * 3600;
+    document.cookie = `dashboard_skin=${next}; path=/; max-age=${oneYear}; samesite=lax`;
+    location.reload();
   },
 
   // ─── Ban Detection ───────────────────────────

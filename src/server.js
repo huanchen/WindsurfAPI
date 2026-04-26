@@ -125,8 +125,22 @@ async function route(req, res) {
   }
   if (path === '/dashboard' || path === '/dashboard/') {
     try {
-      const html = readFileSync(join(__dirname, 'dashboard', 'index.html'));
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      // Cookie-based skin selection. `dashboard_skin=sketch` serves the
+      // experimental hand-drawn console; anything else (or no cookie)
+      // serves the default UI. Each UI sets/unsets the cookie via its own
+      // settings toggle, then reloads — server picks the right file based
+      // on the next request's cookie. Vary: Cookie keeps intermediaries
+      // from poisoning one user's skin onto another.
+      const cookie = String(req.headers.cookie || '');
+      const m = cookie.match(/(?:^|;\s*)dashboard_skin=([^;]+)/);
+      const skin = m ? decodeURIComponent(m[1]) : '';
+      const file = skin === 'sketch' ? 'index-sketch.html' : 'index.html';
+      const html = readFileSync(join(__dirname, 'dashboard', file));
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Vary': 'Cookie',
+        'Cache-Control': 'no-cache',
+      });
       return res.end(html);
     } catch {
       return json(res, 500, { error: 'Dashboard not found' });
