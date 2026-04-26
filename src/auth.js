@@ -41,6 +41,16 @@ function nextReservationToken(now) {
   return now + reservationSeq / 1000;
 }
 
+// Strict positive int env reader (mirrors the helper in client.js /
+// conversation-pool.js). Used by the dynamic cloud probe path below; when
+// this was missing the probe path crashed with "positiveIntEnv is not
+// defined" on every refresh cycle and free-account model discovery
+// silently stopped working.
+function positiveIntEnv(name, fallback) {
+  const n = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function rpmLimitFor(account) {
   return TIER_RPM[account.tier || 'unknown'] ?? 20;
 }
