@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { repairToolCallArguments } from '../src/handlers/chat.js';
 import {
   ToolCallStreamParser,
   parseToolCallsFromText,
@@ -385,5 +386,38 @@ describe('normalizeMessagesForCascade (preamble placement regression)', () => {
     assert.ok(Array.isArray(out[0].content));
     assert.deepEqual(out[0].content[0], image);
     assert.equal(out[0].content[1].text, 'what is this?');
+  });
+});
+
+describe('repairToolCallArguments', () => {
+  it('repairs Bash command prefix truncation when the user gave an exact command', () => {
+    const tc = {
+      name: 'Bash',
+      argumentsJson: JSON.stringify({ command: 'node -p' }),
+    };
+    const repaired = repairToolCallArguments(tc, [
+      {
+        role: 'user',
+        content: 'Tool 2: Bash with command exactly node -p "require(\'./package.json\').version".',
+      },
+    ]);
+    assert.equal(
+      JSON.parse(repaired.argumentsJson).command,
+      'node -p "require(\'./package.json\').version"'
+    );
+  });
+
+  it('does not invent Bash arguments when the model command is not a prefix', () => {
+    const tc = {
+      name: 'Bash',
+      argumentsJson: JSON.stringify({ command: 'npm test' }),
+    };
+    const repaired = repairToolCallArguments(tc, [
+      {
+        role: 'user',
+        content: 'Run exactly node -p "require(\'./package.json\').version".',
+      },
+    ]);
+    assert.equal(JSON.parse(repaired.argumentsJson).command, 'npm test');
   });
 });

@@ -4,7 +4,7 @@
  */
 
 import { createHash, randomUUID } from 'crypto';
-import { WindsurfClient, isCascadeTransportError } from '../client.js';
+import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
 import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation } from '../auth.js';
 import { resolveModel, getModelInfo } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -184,6 +184,74 @@ function strictReuseRetryMs(availability) {
 
 function strictReuseMessage(model, retryMs, reason = 'temporarily unavailable') {
   return `${model} 上下文复用绑定账号暂不可用（${reason}）。为避免切换账号导致上下文丢失，请 ${Math.ceil(retryMs / 1000)} 秒后重试`;
+}
+
+function recentUserText(messages) {
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return contentToString(messages[i].content);
+  }
+  return '';
+}
+
+function shellUnquote(text) {
+  const s = String(text || '').trim();
+  if (s.length >= 2 && ((s[0] === '"' && s.at(-1) === '"') || (s[0] === '\'' && s.at(-1) === '\''))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function trimCommandSentence(text) {
+  const s = String(text || '').trim();
+  let quote = '';
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && quote) { escaped = true; continue; }
+    if (quote) {
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === '\'') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '.' && /\s/.test(s[i + 1] || '')) return s.slice(0, i).trim();
+  }
+  return s.replace(/[.。]\s*$/, '').trim();
+}
+
+function extractRequestedBashCommands(text) {
+  const src = String(text || '');
+  const out = [];
+  const patterns = [
+    /(?:command|run|execute)\s+(?:exactly\s+)?(?::\s*)?`([^`]+)`/gi,
+    /(?:command|run|execute)\s+(?:exactly\s+)?(?::\s*)?([^\n]+)/gi,
+  ];
+  for (const re of patterns) {
+    for (const m of src.matchAll(re)) {
+      const candidate = shellUnquote(trimCommandSentence(m[1])).trim();
+      if (candidate && /\s/.test(candidate)) out.push(candidate);
+    }
+  }
+  return [...new Set(out)];
+}
+
+export function repairToolCallArguments(tc, messages) {
+  if (!tc || String(tc.name || '').toLowerCase() !== 'bash' || typeof tc.argumentsJson !== 'string') return tc;
+  let args;
+  try { args = JSON.parse(tc.argumentsJson); } catch { return tc; }
+  if (!args || typeof args.command !== 'string') return tc;
+  const current = args.command.trim();
+  if (!current) return tc;
+  for (const requested of extractRequestedBashCommands(recentUserText(messages))) {
+    if (requested.length > current.length && requested.startsWith(current)) {
+      return { ...tc, argumentsJson: JSON.stringify({ ...args, command: requested }) };
+    }
+  }
+  return tc;
 }
 
 export function rateLimitCooldownMs(message = '') {
@@ -1062,7 +1130,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     }
     allThinking = sanitizeText(allThinking);
     if (toolCalls.length) {
-      toolCalls = toolCalls.map(tc => sanitizeToolCall(tc));
+      toolCalls = toolCalls.map(tc => sanitizeToolCall(repairToolCallArguments(tc, messages)));
     }
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
@@ -1359,7 +1427,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                   emitContent(pathStreamText.feed(item.text));
                   continue;
                 }
-                const tc = sanitizeToolCall(item.toolCall);
+                const tc = sanitizeToolCall(repairToolCallArguments(item.toolCall, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
                 emitToolCallDelta(tc, idx);
@@ -1372,7 +1440,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               // the emulated call's input too (issue #38) — otherwise Claude
               // Code tries to Read the sandbox path and fails.
               for (const rawTc of parsed.toolCalls) {
-                const tc = sanitizeToolCall(rawTc);
+                const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
                 emitToolCallDelta(tc, idx);
@@ -1492,7 +1560,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               const tail = toolParser.flush();
               if (tail.text) emitContent(pathStreamText.feed(tail.text));
               for (const rawTc of tail.toolCalls) {
-                const tc = sanitizeToolCall(rawTc);
+                const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
                 emitToolCallDelta(tc, idx);
