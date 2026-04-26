@@ -73,7 +73,6 @@ describe('responsesToChat', () => {
       ],
       tools: [
         { type: 'function', name: 'Bash', description: 'Run shell', parameters: { type: 'object' } },
-        { type: 'web_search_preview' },
       ],
     });
     assert.equal(out.messages.length, 1);
@@ -140,10 +139,10 @@ describe('chatToResponse', () => {
       usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
     }, 'claude-sonnet-4.6', 'resp_test', 'msg_test');
     assert.equal(response.status, 'incomplete');
-    assert.equal(response.output[1].type, 'function_call');
-    assert.equal(response.output[1].call_id, 'call_1');
-    assert.equal(response.output[1].name, 'Bash');
-    assert.equal(response.output[1].arguments, '{"command":"pwd"}');
+    assert.equal(response.output[0].type, 'function_call');
+    assert.equal(response.output[0].call_id, 'call_1');
+    assert.equal(response.output[0].name, 'Bash');
+    assert.equal(response.output[0].arguments, '{"command":"pwd"}');
   });
 
   it('maps non-stream reasoning_content to a reasoning output item', () => {
@@ -156,9 +155,39 @@ describe('chatToResponse', () => {
     assert.equal(response.output[0].summary[0].text, 'thinking');
     assert.equal(response.output[1].type, 'message');
   });
+
+  it('omits empty assistant message items for function-call-only responses', () => {
+    const response = chatToResponse({
+      created: 123,
+      model: 'claude-sonnet-4.6',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"pwd"}' } },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }, 'claude-sonnet-4.6', 'resp_test', 'msg_test');
+    assert.deepEqual(response.output.map(item => item.type), ['function_call']);
+  });
 });
 
 describe('handleResponses streaming', () => {
+  it('rejects unsupported Responses-native tool types with a 400', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Hello',
+      tools: [{ type: 'web_search_preview' }],
+    });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.type, 'invalid_request_error');
+    assert.equal(result.body.error.message, 'Unsupported Responses tool type: web_search_preview');
+  });
+
   it('emits the Responses text event sequence and response.completed', async () => {
     const result = await handleResponses({ model: 'claude-sonnet-4.6', input: 'Hello', stream: true }, {
       async handleChatCompletions(body) {
@@ -231,11 +260,6 @@ describe('handleResponses streaming', () => {
       'response.function_call_arguments.delta',
       'response.function_call_arguments.done',
       'response.output_item.done',
-      'response.output_item.added',
-      'response.content_part.added',
-      'response.output_text.done',
-      'response.content_part.done',
-      'response.output_item.done',
       'response.completed',
     ]);
     assertSequenceNumbers(events);
@@ -244,6 +268,7 @@ describe('handleResponses streaming', () => {
     assert.equal(events[6].data.item.call_id, 'call_1');
     assert.equal(events.at(-1).data.response.status, 'completed');
     assert.equal(events.at(-1).data.response.output[0].type, 'function_call');
+    assert.equal(events.at(-1).data.response.output.length, 1);
   });
 
   it('emits error event and closes when the upstream stream throws', async () => {

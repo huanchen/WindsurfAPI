@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation } from '../auth.js';
 import { resolveModel, getModelInfo } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
@@ -186,9 +186,17 @@ function strictReuseMessage(model, retryMs, reason = 'temporarily unavailable') 
   return `${model} 上下文复用绑定账号暂不可用（${reason}）。为避免切换账号导致上下文丢失，请 ${Math.ceil(retryMs / 1000)} 秒后重试`;
 }
 
-function rateLimitCooldownMs(message = '') {
+export function rateLimitCooldownMs(message = '') {
+  const m = String(message || '').match(/(?:retry (?:after|in)|after)\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)/i);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2].toLowerCase();
+    if (unit.startsWith('h')) return n * 60 * 60 * 1000;
+    if (unit.startsWith('m')) return n * 60 * 1000;
+    return n * 1000;
+  }
   if (/about an hour|in an hour|try again in.*hour/i.test(message)) return 60 * 60 * 1000;
-  return 5 * 60 * 1000;
+  return 60 * 1000;
 }
 
 function genId() {
@@ -436,6 +444,8 @@ export async function handleChatCompletions(body, context = {}) {
   } = body;
   let messages = body.messages;
   const callerKey = context.callerKey || body.__callerKey || '';
+  const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
+  const waitForAccountFn = context.waitForAccount || waitForAccount;
 
   // Probe diagnostics: dump compact request shape for every call, plus a
   // tail of the last user turn. Keeps us able to see how third-party
@@ -664,7 +674,10 @@ export async function handleChatCompletions(body, context = {}) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey);
+    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey, {
+      checkMessageRateLimit: checkMessageRateLimitFn,
+      waitForAccount: waitForAccountFn,
+    });
   }
 
   // ── Local response cache (exact body match) ─────────────
@@ -750,7 +763,7 @@ export async function handleChatCompletions(body, context = {}) {
       }
     }
     if (!acct) {
-      acct = await waitForAccount(tried, null, QUEUE_MAX_WAIT_MS, modelKey);
+      acct = await waitForAccountFn(tried, null, QUEUE_MAX_WAIT_MS, modelKey);
       if (!acct) break;
     }
     tried.push(acct.apiKey);
@@ -761,10 +774,13 @@ export async function handleChatCompletions(body, context = {}) {
     if (isExperimentalEnabled('preflightRateLimit')) {
       try {
         const px = getEffectiveProxy(acct.id) || null;
-        const rl = await checkMessageRateLimit(acct.apiKey, px);
+        const rl = await checkMessageRateLimitFn(acct.apiKey, px);
         if (!rl.hasCapacity) {
           log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
-          markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
+          refundReservation(acct.apiKey, acct.reservationTimestamp);
+          if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
+            markRateLimited(acct.apiKey, rl.retryAfterMs, modelKey);
+          }
           if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
             const availability = getAccountAvailability(acct.apiKey, modelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
@@ -872,6 +888,25 @@ export async function handleChatCompletions(body, context = {}) {
     };
   }
   // If all accounts exhausted, check if it's because they're all rate-limited
+  const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
+  if (temporaryUnavailable.allUnavailable) {
+    if (checkedOutReuseEntry && fpBefore) {
+      poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+      log.info(`Chat[${reqId}]: restored checked-out cascade after temporary unavailability`);
+    }
+    const retryAfterSec = Math.ceil(temporaryUnavailable.retryAfterMs / 1000);
+    return {
+      status: 429,
+      headers: { 'Retry-After': String(retryAfterSec) },
+      body: {
+        error: {
+          message: `${displayModel} 所有账号暂时不可用，请 ${retryAfterSec} 秒后重试`,
+          type: 'rate_limit_exceeded',
+          retry_after_ms: temporaryUnavailable.retryAfterMs,
+        },
+      },
+    };
+  }
   if (!lastErr || lastErr.status === 429) {
     const rl = isAllRateLimited(modelKey);
     if (rl.allLimited) {
@@ -1060,7 +1095,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
   }
 }
 
-function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '') {
+function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '', deps = {}) {
+  const checkMessageRateLimitFn = deps.checkMessageRateLimit || checkMessageRateLimit;
+  const waitForAccountFn = deps.waitForAccount || waitForAccount;
   return {
     status: 200,
     stream: true,
@@ -1120,8 +1157,9 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               choices: [{ index: 0, delta: { content: cached.text }, finish_reason: null }] });
           }
           send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-            usage: cachedUsage(messages, cached.text) });
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+          send({ id, object: 'chat.completion.chunk', created, model,
+            choices: [], usage: cachedUsage(messages, cached.text) });
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         } finally {
           unregisterSse();
@@ -1228,18 +1266,32 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           //              →  client
           let safeText = chunk.text;
           if (toolParser) {
-            const { text: safe, toolCalls: done } = toolParser.feed(chunk.text);
-            safeText = safe;
-            // Only emit tool_call deltas when emulating — otherwise the
-            // parsed calls came from Cascade's built-in tools and are
-            // silently discarded. Sanitize server-internal paths out of
-            // the emulated call's input too (issue #38) — otherwise Claude
-            // Code tries to Read the sandbox path and fails.
-            for (const rawTc of done) {
-              const tc = sanitizeToolCall(rawTc);
-              const idx = collectedToolCalls.length;
-              collectedToolCalls.push(tc);
-              emitToolCallDelta(tc, idx);
+            const parsed = toolParser.feed(chunk.text);
+            safeText = parsed.text;
+            if (Array.isArray(parsed.items) && parsed.items.length) {
+              for (const item of parsed.items) {
+                if (item.type === 'text') {
+                  emitContent(pathStreamText.feed(item.text));
+                  continue;
+                }
+                const tc = sanitizeToolCall(item.toolCall);
+                const idx = collectedToolCalls.length;
+                collectedToolCalls.push(tc);
+                emitToolCallDelta(tc, idx);
+              }
+              safeText = '';
+            } else {
+              // Only emit tool_call deltas when emulating — otherwise the
+              // parsed calls came from Cascade's built-in tools and are
+              // silently discarded. Sanitize server-internal paths out of
+              // the emulated call's input too (issue #38) — otherwise Claude
+              // Code tries to Read the sandbox path and fails.
+              for (const rawTc of parsed.toolCalls) {
+                const tc = sanitizeToolCall(rawTc);
+                const idx = collectedToolCalls.length;
+                collectedToolCalls.push(tc);
+                emitToolCallDelta(tc, idx);
+              }
             }
           }
           if (safeText) emitContent(pathStreamText.feed(safeText));
@@ -1283,7 +1335,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             }
           }
           if (!acct) {
-            acct = await waitForAccount(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
+            acct = await waitForAccountFn(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
             if (!acct) break;
           }
           tried.push(acct.apiKey);
@@ -1294,10 +1346,13 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           if (isExperimentalEnabled('preflightRateLimit')) {
             try {
               const px = getEffectiveProxy(acct.id) || null;
-              const rl = await checkMessageRateLimit(acct.apiKey, px);
+              const rl = await checkMessageRateLimitFn(acct.apiKey, px);
               if (!rl.hasCapacity) {
                 log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
-                markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
+                refundReservation(acct.apiKey, acct.reservationTimestamp);
+                if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
+                  markRateLimited(acct.apiKey, rl.retryAfterMs, modelKey);
+                }
                 if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
                   const availability = getAccountAvailability(acct.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
@@ -1449,12 +1504,15 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
         log.error('Stream error after retries:', lastErr?.message);
         recordRequest(model, false, Date.now() - startTime, currentApiKey);
         try {
+          const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
           const rl = isAllRateLimited(modelKey);
           const allInternal = streamInternalCount > 0 && tried.length > 0 && streamInternalCount >= tried.length;
           // 优先暴露 upstream_transient，避免把 Cascade transport 抖动误报成账号限流。
           const lastIsTransport = isCascadeTransportError(lastErr);
           const errMsg = allInternal
             ? upstreamTransientErrorMessage(model, tried.length, lastIsTransport ? 'cascade_transport' : 'internal_error')
+            : temporaryUnavailable.allUnavailable
+            ? `${model} 所有账号暂时不可用，请 ${Math.ceil(temporaryUnavailable.retryAfterMs / 1000)} 秒后重试`
             : rl.allLimited
             ? `${model} 所有账号均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`
             : sanitizeText(lastErr?.message || 'no accounts');
@@ -1473,10 +1531,10 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             // output). Close cleanly with a plain stop — the caller saw
             // whatever partial content we produced. Error details only
             // go to the server log.
-            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : 'upstream_error'));
+            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : temporaryUnavailable.allUnavailable ? 'rate_limit_exceeded' : 'upstream_error'));
             log.warn(`Stream: partial response delivered then failed (${errMsg})`);
           } else {
-            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : 'upstream_error'));
+            send(chatStreamError(errMsg, allInternal ? 'upstream_transient_error' : temporaryUnavailable.allUnavailable ? 'rate_limit_exceeded' : 'upstream_error'));
           }
           res.write('data: [DONE]\n\n');
         } catch {}

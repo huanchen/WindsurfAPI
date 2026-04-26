@@ -286,6 +286,7 @@ export async function checkMessageRateLimit(apiKey, proxy = null) {
           hasCapacity: res.data.hasCapacity !== false,
           messagesRemaining: res.data.messagesRemaining ?? -1,
           maxMessages: res.data.maxMessages ?? -1,
+          retryAfterMs: Number.isFinite(res.data.retryAfterMs) ? res.data.retryAfterMs : null,
         };
       } catch (e) {
         lastErr = e;
@@ -296,5 +297,5 @@ export async function checkMessageRateLimit(apiKey, proxy = null) {
   }
   // On failure, assume capacity so we don't block requests.
   log.warn(`CheckRateLimit failed: ${lastErr?.message}`);
-  return { hasCapacity: true, messagesRemaining: -1, maxMessages: -1 };
+  return { hasCapacity: true, messagesRemaining: -1, maxMessages: -1, retryAfterMs: null };
 }

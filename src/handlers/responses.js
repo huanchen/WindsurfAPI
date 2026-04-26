@@ -46,7 +46,10 @@ function normalizeMessageContent(content) {
 }
 
 function responseToolToChatTool(tool) {
-  if (!tool || tool.type !== 'function') return null; // TODO: map web_search and other Responses-native tools.
+  if (!tool) return null;
+  if (tool.type !== 'function') {
+    throw new Error(`Unsupported Responses tool type: ${tool.type}`);
+  }
   if (tool.function) return tool;
   return {
     type: 'function',
@@ -169,7 +172,7 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   const text = message.content || '';
   const output = [];
   if (message.reasoning_content) output.push(reasoningItem('rs_' + msgId.slice(4), message.reasoning_content));
-  output.push(textMessageItem(msgId, text));
+  if (text) output.push(textMessageItem(msgId, text));
   for (const tc of (message.tool_calls || [])) output.push(functionCallItem(tc));
 
   return {
@@ -393,7 +396,7 @@ class ResponsesStreamTranslator {
     this.start();
     this.finishReasoning();
     this.finishToolCalls();
-    this.finishMessage();
+    if (this.messageStarted || this.text) this.finishMessage();
     this.send('response.completed', {
       response: {
         ...this.responseBase('completed', this.outputItems.filter(Boolean)),
@@ -501,7 +504,20 @@ export async function handleResponses(body, deps = {}) {
   const context = deps.context || {};
   const responseId = genResponseId();
   const requestedModel = body.model || 'claude-sonnet-4.6';
-  const chatBody = responsesToChat(body);
+  let chatBody;
+  try {
+    chatBody = responsesToChat(body);
+  } catch (err) {
+    return {
+      status: 400,
+      body: {
+        error: {
+          message: err?.message || 'Invalid Responses request',
+          type: 'invalid_request_error',
+        },
+      },
+    };
+  }
 
   if (!body.stream) {
     const result = await chatHandler({ ...chatBody, stream: false }, context);

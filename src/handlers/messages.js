@@ -22,6 +22,16 @@ function genMsgId() {
 // ─── Anthropic → OpenAI request translation ──────────────────
 
 function anthropicToOpenAI(body) {
+  const mapAnthropicToolChoice = (toolChoice) => {
+    if (!toolChoice || typeof toolChoice !== 'object') return toolChoice;
+    if (toolChoice.type === 'auto') return 'auto';
+    if (toolChoice.type === 'any') return 'required';
+    if (toolChoice.type === 'none') return 'none';
+    if (toolChoice.type === 'tool' && toolChoice.name) {
+      return { type: 'function', function: { name: toolChoice.name } };
+    }
+    return toolChoice;
+  };
   const messages = [];
   if (body.system) {
     const sysText = typeof body.system === 'string'
@@ -95,6 +105,8 @@ function anthropicToOpenAI(body) {
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { top_p: body.top_p } : {}),
     ...(body.stop_sequences ? { stop: body.stop_sequences } : {}),
+    ...(body.tool_choice ? { tool_choice: mapAnthropicToolChoice(body.tool_choice) } : {}),
+    ...(body.thinking ? { thinking: body.thinking } : {}),
   };
 }
 

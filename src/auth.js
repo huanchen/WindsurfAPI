@@ -398,12 +398,14 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
 
   const { account } = candidates[0];
   account._rpmHistory.push(now);
+  account._lastReservationAt = now;
   account.lastUsed = now;
   account._inflight = (account._inflight || 0) + 1;
   return {
     id: account.id, email: account.email, apiKey: account.apiKey,
     apiServerUrl: account.apiServerUrl || '',
     proxy: getEffectiveProxy(account.id) || null,
+    reservationTimestamp: now,
   };
 }
 
@@ -439,12 +441,14 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   if (used >= limit) return null;
   if (modelKey && !isModelAllowedForAccount(a, modelKey)) return null;
   a._rpmHistory.push(now);
+  a._lastReservationAt = now;
   a.lastUsed = now;
   a._inflight = (a._inflight || 0) + 1;
   return {
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl || '',
     proxy: getEffectiveProxy(a.id) || null,
+    reservationTimestamp: now,
   };
 }
 
@@ -530,15 +534,28 @@ export async function ensureLsForAccount(accountId) {
 export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
-  const until = Date.now() + durationMs;
+  const safeMs = Math.max(1000, Number(durationMs) || 0);
+  const until = Date.now() + safeMs;
   if (modelKey) {
     if (!account._modelRateLimits) account._modelRateLimits = {};
-    account._modelRateLimits[modelKey] = until;
-    log.warn(`Account ${account.id} (${account.email}) rate-limited on ${modelKey} for ${Math.round(durationMs / 60000)} min`);
+    account._modelRateLimits[modelKey] = Math.max(account._modelRateLimits[modelKey] || 0, until);
+    log.warn(`Account ${account.id} (${account.email}) rate-limited on ${modelKey} for ${Math.round(safeMs / 60000)} min`);
   } else {
-    account.rateLimitedUntil = until;
-    log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(durationMs / 60000)} min`);
+    account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, until);
+    log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(safeMs / 60000)} min`);
   }
+}
+
+export function refundReservation(apiKey, timestamp) {
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account) return false;
+  if (!Number.isFinite(timestamp)) return false;
+  if ((account._inflight || 0) <= 0) return false;
+  pruneRpmHistory(account, Date.now());
+  const idx = account._rpmHistory?.lastIndexOf(timestamp) ?? -1;
+  if (idx === -1) return false;
+  account._rpmHistory.splice(idx, 1);
+  return true;
 }
 
 /**
@@ -626,6 +643,50 @@ export function isAllRateLimited(modelKey) {
   if (!anyEligible) return { allLimited: false };
   const retryAfterMs = soonestExpiry === Infinity ? 60000 : Math.max(1000, soonestExpiry - now);
   return { allLimited: true, retryAfterMs };
+}
+
+export function isAllTemporarilyUnavailable(modelKey) {
+  const now = Date.now();
+  let anyEligible = false;
+  let soonestExpiry = Infinity;
+
+  for (const a of accounts) {
+    if (a.status !== 'active') continue;
+    const limit = rpmLimitFor(a);
+    if (limit <= 0) continue;
+    if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
+    anyEligible = true;
+
+    if (a.rateLimitedUntil && a.rateLimitedUntil > now) {
+      soonestExpiry = Math.min(soonestExpiry, a.rateLimitedUntil);
+      continue;
+    }
+
+    if (modelKey && a._modelRateLimits) {
+      const until = a._modelRateLimits[modelKey];
+      if (until && until > now) {
+        soonestExpiry = Math.min(soonestExpiry, until);
+        continue;
+      }
+      if (until && until <= now) delete a._modelRateLimits[modelKey];
+    }
+
+    const used = pruneRpmHistory(a, now);
+    if (used >= limit) {
+      const oldest = a._rpmHistory?.[0];
+      soonestExpiry = Math.min(
+        soonestExpiry,
+        oldest ? Math.max(now + 30_000, oldest + RPM_WINDOW_MS) : now + 30_000
+      );
+      continue;
+    }
+
+    return { allUnavailable: false, retryAfterMs: null };
+  }
+
+  if (!anyEligible) return { allUnavailable: false, retryAfterMs: null };
+  const retryAfterMs = soonestExpiry === Infinity ? 30_000 : Math.max(1000, soonestExpiry - now);
+  return { allUnavailable: true, retryAfterMs };
 }
 
 export function isAuthenticated() {

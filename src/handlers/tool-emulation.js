@@ -332,10 +332,10 @@ export class ToolCallStreamParser {
     return -1;
   }
 
-  _consumeJsonBlock(parseFn, doneCalls, safeParts) {
+  _consumeJsonBlock(parseFn, pushTool, pushText) {
     if (this.buffer.length > 65_536) {
       log.warn(`ToolCallStreamParser: JSON block exceeds 65KB (${this.buffer.length} bytes), emitting as text`);
-      safeParts.push(this.buffer);
+      pushText(this.buffer);
       this.buffer = '';
       return true;
     }
@@ -345,10 +345,9 @@ export class ToolCallStreamParser {
     this.buffer = this.buffer.slice(endIdx + 1);
     const tc = parseFn(jsonStr);
     if (tc) {
-      doneCalls.push(tc);
-      this._totalSeen++;
+      pushTool(tc);
     } else {
-      safeParts.push(jsonStr);
+      pushText(jsonStr);
     }
     return true;
   }
@@ -385,10 +384,22 @@ export class ToolCallStreamParser {
   }
 
   feed(delta) {
-    if (!delta) return { text: '', toolCalls: [] };
+    if (!delta) return { text: '', toolCalls: [], items: [] };
     this.buffer += delta;
     const safeParts = [];
     const doneCalls = [];
+    const items = [];
+    const pushText = (text) => {
+      if (!text) return;
+      safeParts.push(text);
+      items.push({ type: 'text', text });
+    };
+    const pushTool = (toolCall) => {
+      if (!toolCall) return;
+      doneCalls.push(toolCall);
+      items.push({ type: 'tool_call', toolCall });
+      this._totalSeen++;
+    };
     const TC_OPEN = '<tool_call>';
     const TC_CLOSE = '</tool_call>';
     const TR_PREFIX = '<tool_result';
@@ -419,28 +430,27 @@ export class ToolCallStreamParser {
           const args = parsed.arguments;
           const argsJson = typeof args === 'string' ? args : JSON.stringify(args ?? {});
           log.debug(`ToolParser: matched xml format, name=${parsed.name}`);
-          doneCalls.push({
+          pushTool({
             id: `call_${this._totalSeen}_${Date.now().toString(36)}`,
             name: parsed.name,
             argumentsJson: argsJson,
           });
-          this._totalSeen++;
         } else {
-          safeParts.push(`<tool_call>${body}</tool_call>`);
+          pushText(`<tool_call>${body}</tool_call>`);
         }
         continue;
       }
 
       // ── Inside a {"tool_code": "…"} block ──
       if (this.inToolCode) {
-        if (!this._consumeJsonBlock(s => this._parseToolCodeJson(s), doneCalls, safeParts)) break;
+        if (!this._consumeJsonBlock(s => this._parseToolCodeJson(s), pushTool, pushText)) break;
         this.inToolCode = false;
         continue;
       }
 
       // ── Inside a bare {"name":"…","arguments":{…}} block ──
       if (this.inBareCall) {
-        if (!this._consumeJsonBlock(s => this._parseBareToolCallJson(s), doneCalls, safeParts)) break;
+        if (!this._consumeJsonBlock(s => this._parseBareToolCallJson(s), pushTool, pushText)) break;
         this.inBareCall = false;
         continue;
       }
@@ -477,12 +487,12 @@ export class ToolCallStreamParser {
           }
         }
         const emitUpto = this.buffer.length - holdLen;
-        if (emitUpto > 0) safeParts.push(this.buffer.slice(0, emitUpto));
+        if (emitUpto > 0) pushText(this.buffer.slice(0, emitUpto));
         this.buffer = this.buffer.slice(emitUpto);
         break;
       }
 
-      if (nextIdx > 0) safeParts.push(this.buffer.slice(0, nextIdx));
+      if (nextIdx > 0) pushText(this.buffer.slice(0, nextIdx));
 
       if (tagType === 'tc') {
         this.buffer = this.buffer.slice(nextIdx + TC_OPEN.length);
@@ -504,7 +514,7 @@ export class ToolCallStreamParser {
       }
     }
 
-    return { text: safeParts.join(''), toolCalls: doneCalls };
+    return { text: safeParts.join(''), toolCalls: doneCalls, items };
   }
 
   flush() {

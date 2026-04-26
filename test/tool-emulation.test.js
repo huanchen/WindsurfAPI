@@ -54,6 +54,26 @@ describe('ToolCallStreamParser', () => {
     assert.ok(!text.includes('<tool_call>'));
   });
 
+  it('preserves text/tool order in items within one chunk', () => {
+    const parser = new ToolCallStreamParser();
+    const r = parser.feed('A<tool_call>{"name":"Read","arguments":{"path":"x"}}</tool_call>B');
+    assert.deepEqual(r.items, [
+      { type: 'text', text: 'A' },
+      {
+        type: 'tool_call',
+        toolCall: {
+          id: r.toolCalls[0].id,
+          name: 'Read',
+          argumentsJson: '{"path":"x"}',
+        },
+      },
+      { type: 'text', text: 'B' },
+    ]);
+    assert.equal(r.text, 'AB');
+    assert.equal(r.toolCalls.length, 1);
+    assert.equal(r.toolCalls[0].name, 'Read');
+  });
+
   it('handles multiple tool calls in one chunk', () => {
     const parser = new ToolCallStreamParser();
     const input = '<tool_call>{"name":"A","arguments":{}}</tool_call>text<tool_call>{"name":"B","arguments":{}}</tool_call>';
