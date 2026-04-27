@@ -177,15 +177,40 @@ describe('chatToResponse', () => {
 });
 
 describe('handleResponses streaming', () => {
-  it('rejects unsupported Responses-native tool types with a 400', async () => {
+  it('drops Responses-native server-side tools instead of failing the whole request', async () => {
+    // Codex CLI / SDK clients commonly enable web_search / file_search
+    // alongside function tools. Throwing on the first non-function entry
+    // killed the whole request even when the model still had real
+    // function tools to use. Drop the server-side ones, forward the rest.
+    let forwarded = null;
     const result = await handleResponses({
       model: 'claude-sonnet-4.6',
       input: 'Hello',
-      tools: [{ type: 'web_search_preview' }],
+      stream: false,
+      tools: [
+        { type: 'web_search_preview' },
+        { type: 'file_search' },
+        { type: 'computer_use_preview' },
+        { type: 'mcp', server_label: 'foo' },
+        { type: 'function', name: 'do_thing', parameters: { type: 'object' } },
+      ],
+    }, {
+      async handleChatCompletions(chatBody) {
+        forwarded = chatBody;
+        return {
+          status: 200,
+          body: {
+            id: 'c1', object: 'chat.completion', created: 1, model: chatBody.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
     });
-    assert.equal(result.status, 400);
-    assert.equal(result.body.error.type, 'invalid_request_error');
-    assert.equal(result.body.error.message, 'Unsupported Responses tool type: web_search_preview');
+    assert.equal(result.status, 200);
+    assert.ok(Array.isArray(forwarded.tools));
+    assert.equal(forwarded.tools.length, 1);
+    assert.equal(forwarded.tools[0].function.name, 'do_thing');
   });
 
   it('emits the Responses text event sequence and response.completed', async () => {

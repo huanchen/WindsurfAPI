@@ -45,10 +45,26 @@ function normalizeMessageContent(content) {
   return out.length ? out : '';
 }
 
+// Codex CLI / OpenAI SDK enables server-side tools by listing them by `type`
+// in the `tools` array. The proxy can't honor any of these (each one needs
+// its own bridge — web search service, sandbox, computer-driver MCP, etc.),
+// so silently drop them and let the model continue with the function tools
+// it does have. Throwing 500 for the whole request — the previous
+// behaviour — broke every Codex run that probed for `web_search`.
+const SERVER_SIDE_RESPONSES_TOOL_TYPES = new Set([
+  'web_search',
+  'web_search_preview',
+  'file_search',
+  'computer_use_preview',
+  'mcp',
+]);
+
 function responseToolToChatTool(tool) {
   if (!tool) return null;
-  if (tool.type !== 'function') {
-    throw new Error(`Unsupported Responses tool type: ${tool.type}`);
+  if (tool.type && tool.type !== 'function') {
+    if (SERVER_SIDE_RESPONSES_TOOL_TYPES.has(tool.type)) return null;
+    log.warn(`responses: dropping unknown tool type "${tool.type}" — only function-typed tools are forwarded`);
+    return null;
   }
   if (tool.function) return tool;
   return {
