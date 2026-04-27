@@ -161,9 +161,14 @@ export function fingerprintAfter(messages, modelKey = '', callerKey = '') {
   return sha256(String(callerKey || '') + '\0' + modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(turns)));
 }
 
+function effectiveTtl(entry) {
+  const hint = Number(entry?.ttlHintMs);
+  return Number.isFinite(hint) && hint > 0 ? hint : POOL_TTL_MS;
+}
+
 function prune(now) {
   for (const [fp, e] of _pool) {
-    if (now - e.lastAccess > POOL_TTL_MS) { _pool.delete(fp); stats.expired++; }
+    if (now - e.lastAccess > effectiveTtl(e)) { _pool.delete(fp); stats.expired++; }
   }
   if (_pool.size <= POOL_MAX) return;
   const entries = [..._pool.entries()].sort((a, b) => a[1].lastAccess - b[1].lastAccess);
@@ -190,7 +195,7 @@ export function checkout(fingerprint, callerKey = '') {
     stats.misses++;
     return null;
   }
-  if (Date.now() - entry.lastAccess > POOL_TTL_MS) {
+  if (Date.now() - entry.lastAccess > effectiveTtl(entry)) {
     stats.expired++;
     stats.misses++;
     return null;
@@ -201,10 +206,21 @@ export function checkout(fingerprint, callerKey = '') {
 
 /**
  * Store (or restore) a conversation entry under a new fingerprint.
+ *
+ * `ttlHintMs` (optional) extends this entry's expiry past the pool's
+ * default 30 min — used to honour Anthropic prompt-caching markers that
+ * request a 1h ttl. Pass `undefined` (default) to keep the existing
+ * entry-level hint when restoring across turns.
  */
-export function checkin(fingerprint, entry, callerKey = '') {
+export function checkin(fingerprint, entry, callerKey = '', ttlHintMs) {
   if (!fingerprint || !entry) return;
   const now = Date.now();
+  // When the caller didn't pass an explicit hint, preserve any hint
+  // that was already on the source entry — restoring after a successful
+  // turn shouldn't silently shorten the TTL the original request asked for.
+  const resolvedHint = ttlHintMs !== undefined
+    ? ttlHintMs
+    : entry.ttlHintMs;
   _pool.set(fingerprint, {
     cascadeId: entry.cascadeId,
     sessionId: entry.sessionId,
@@ -215,6 +231,7 @@ export function checkin(fingerprint, entry, callerKey = '') {
     generatorOffset: Number.isFinite(entry.generatorOffset) ? entry.generatorOffset : 0,
     createdAt: entry.createdAt || now,
     lastAccess: now,
+    ...(Number.isFinite(resolvedHint) && resolvedHint > 0 ? { ttlHintMs: resolvedHint } : {}),
   });
   stats.stores++;
   prune(now);

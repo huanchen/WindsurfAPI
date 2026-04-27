@@ -62,9 +62,54 @@ export function extractCallerSubKey(body) {
   return sha256Hex(tag).slice(0, 16);
 }
 
+// Anthropic prompt caching (`cache_control`) — verified spec:
+//   - shape: { type: 'ephemeral', ttl?: '5m' | '1h' }, default ttl 5m
+//   - placeable on tools[], system[] blocks, messages[].content[] blocks
+//   - prefix-cumulative, ordered tools → system → messages
+//   - max 4 breakpoints per request
+//
+// Cascade upstream doesn't speak this dialect — its own caching layer
+// reports cacheReadTokens/cacheWriteTokens that already flow through
+// chat.js → openAIToAnthropic. We strip the markers before forwarding
+// (so they don't leak into Cascade requests) and expose a policy
+// summary for downstream stages: TTL hint for the conversation pool,
+// 5m vs 1h split attribution in usage.cache_creation.
+//
+// Returns: { has1h, breakpointCount } describing the request.
+function extractCachePolicy(body) {
+  let breakpointCount = 0;
+  let has1h = false;
+  const visit = (block) => {
+    if (!block || typeof block !== 'object') return;
+    const cc = block.cache_control;
+    if (cc && typeof cc === 'object' && cc.type === 'ephemeral') {
+      breakpointCount++;
+      if (cc.ttl === '1h') has1h = true;
+      delete block.cache_control;
+    }
+  };
+  if (Array.isArray(body.tools)) for (const t of body.tools) visit(t);
+  if (Array.isArray(body.system)) for (const s of body.system) visit(s);
+  if (Array.isArray(body.messages)) {
+    for (const m of body.messages) {
+      if (Array.isArray(m.content)) for (const c of m.content) visit(c);
+    }
+  }
+  // Also accept top-level cache_control hint (auto-caching mode).
+  if (body.cache_control && typeof body.cache_control === 'object') {
+    if (body.cache_control.type === 'ephemeral') {
+      breakpointCount++;
+      if (body.cache_control.ttl === '1h') has1h = true;
+    }
+    delete body.cache_control;
+  }
+  return { has1h, breakpointCount };
+}
+
 // ─── Anthropic → OpenAI request translation ──────────────────
 
 function anthropicToOpenAI(body) {
+  const cachePolicy = extractCachePolicy(body);
   const mapAnthropicToolChoice = (toolChoice) => {
     if (!toolChoice || typeof toolChoice !== 'object') return toolChoice;
     if (toolChoice.type === 'auto') return 'auto';
@@ -200,8 +245,11 @@ function anthropicToOpenAI(body) {
     ...(body.thinking ? { thinking: body.thinking } : {}),
     ...(ocEffort ? { reasoning_effort: ocEffort } : {}),
     ...(translatedResponseFormat ? { response_format: translatedResponseFormat } : {}),
+    ...(cachePolicy.breakpointCount > 0 ? { __cachePolicy: cachePolicy } : {}),
   };
 }
+
+export { extractCachePolicy };
 
 export function annotateRiskyReadToolResult(content, { toolName = '', isError = false } = {}) {
   if (toolName !== 'Read' || typeof content !== 'string' || !content) return content;
@@ -258,12 +306,35 @@ function openAIToAnthropic(result, model, msgId) {
     model: model || result.model,
     stop_reason: stopMap[choice?.finish_reason] || 'end_turn',
     stop_sequence: null,
-    usage: {
-      input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
-      output_tokens: usage.completion_tokens || usage.output_tokens || 0,
-      cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
-      cache_read_input_tokens: usage.prompt_tokens_details?.cached_tokens || 0,
-    },
+    usage: buildAnthropicUsage(usage),
+  };
+}
+
+// Anthropic's prompt-caching usage shape carries BOTH the legacy flat
+// fields (cache_creation_input_tokens, cache_read_input_tokens) AND the
+// newer nested split (cache_creation: { ephemeral_5m_input_tokens,
+// ephemeral_1h_input_tokens }, GA since 2025-08-18). Emit both so SDK
+// callers on either schema see consistent numbers — the flat total
+// equals ephemeral_5m + ephemeral_1h. When chat.js doesn't supply a
+// split (no cache_control on the request) we attribute the whole
+// creation count to the 5m bucket since that's the spec default.
+function buildAnthropicUsage(usage) {
+  const cacheRead = usage.cache_read_input_tokens
+    ?? usage.prompt_tokens_details?.cached_tokens
+    ?? 0;
+  const cacheCreationFlat = usage.cache_creation_input_tokens || 0;
+  const split = usage.cache_creation && typeof usage.cache_creation === 'object'
+    ? {
+        ephemeral_5m_input_tokens: usage.cache_creation.ephemeral_5m_input_tokens || 0,
+        ephemeral_1h_input_tokens: usage.cache_creation.ephemeral_1h_input_tokens || 0,
+      }
+    : { ephemeral_5m_input_tokens: cacheCreationFlat, ephemeral_1h_input_tokens: 0 };
+  return {
+    input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+    output_tokens: usage.completion_tokens || usage.output_tokens || 0,
+    cache_creation_input_tokens: cacheCreationFlat,
+    cache_read_input_tokens: cacheRead,
+    cache_creation: split,
   };
 }
 
@@ -305,7 +376,13 @@ class AnthropicStreamTranslator {
         model: this.model,
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+        },
       },
     });
   }
@@ -404,12 +481,7 @@ class AnthropicStreamTranslator {
     this.send('message_delta', {
       type: 'message_delta',
       delta: { stop_reason: this.stopReason, stop_sequence: null },
-      usage: {
-        input_tokens: u.prompt_tokens || u.input_tokens || 0,
-        output_tokens: u.completion_tokens || u.output_tokens || 0,
-        cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
-        cache_read_input_tokens: u.prompt_tokens_details?.cached_tokens || 0,
-      },
+      usage: buildAnthropicUsage(u),
     });
     this.send('message_stop', { type: 'message_stop' });
   }

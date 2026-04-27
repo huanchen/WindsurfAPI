@@ -683,13 +683,33 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
  *   prompt_tokens_details.cached_tokens       = cacheReadTokens
  *   cache_creation_input_tokens (Anthropic ext) = cacheWriteTokens
  */
-function buildUsageBody(serverUsage, messages, completionText, thinkingText = '') {
+// Anthropic prompt-caching ttl='1h' markers should keep the cascade
+// pool entry alive past its 30-minute default. 90 minutes = 1h cache
+// window + 30 min slack so the next turn comfortably falls inside the
+// extended TTL. 5m markers (the spec default) need no hint — the
+// pool's default already covers them.
+function ttlHintFromCachePolicy(cachePolicy) {
+  if (!cachePolicy?.has1h) return undefined;
+  return 90 * 60 * 1000;
+}
+
+function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null) {
   if (serverUsage && (serverUsage.inputTokens || serverUsage.outputTokens)) {
     const inputTokens = serverUsage.inputTokens || 0;
     const outputTokens = serverUsage.outputTokens || 0;
     const cacheRead = serverUsage.cacheReadTokens || 0;
     const cacheWrite = serverUsage.cacheWriteTokens || 0;
     const promptTotal = inputTokens + cacheRead + cacheWrite;
+    // Anthropic prompt-caching split: when the client tagged any block
+    // with ttl='1h' the creation tokens go to ephemeral_1h, otherwise to
+    // ephemeral_5m. Cascade doesn't separate the pools so we can't
+    // attribute byte-for-byte; this is the binary "any 1h?" routing
+    // Anthropic's own API documents and matches what real clients see
+    // when they use a single TTL per request (which is the common case).
+    const cacheCreationSplit = {
+      ephemeral_5m_input_tokens: cachePolicy?.has1h ? 0 : cacheWrite,
+      ephemeral_1h_input_tokens: cachePolicy?.has1h ? cacheWrite : 0,
+    };
     return {
       prompt_tokens: promptTotal,
       completion_tokens: outputTokens,
@@ -699,6 +719,8 @@ function buildUsageBody(serverUsage, messages, completionText, thinkingText = ''
       prompt_tokens_details: { cached_tokens: cacheRead },
       completion_tokens_details: { reasoning_tokens: 0 },
       cache_creation_input_tokens: cacheWrite,
+      cache_read_input_tokens: cacheRead,
+      cache_creation: cacheCreationSplit,
     };
   }
   const prompt = estimateTokens(messages);
@@ -741,6 +763,7 @@ export async function handleChatCompletions(body, context = {}) {
   } = body;
   let messages = body.messages;
   const callerKey = context.callerKey || body.__callerKey || '';
+  const cachePolicy = body.__cachePolicy || null;
   const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = context.waitForAccount || waitForAccount;
 
@@ -1080,7 +1103,7 @@ export async function handleChatCompletions(body, context = {}) {
           if (strictReuse && checkedOutReuseEntry && fpBefore) {
             const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, modelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
-            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: strict reuse preserved cascade; owner unavailable reason=${availability.reason}`);
             return {
               status: 429,
@@ -1120,7 +1143,7 @@ export async function handleChatCompletions(body, context = {}) {
           if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
             const availability = getAccountAvailability(acct.apiKey, modelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
-            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: strict reuse preserved cascade after preflight rate limit`);
             return {
               status: 429,
@@ -1161,7 +1184,7 @@ export async function handleChatCompletions(body, context = {}) {
     const result = await nonStreamResponse(
       client, chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
-      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey } : null,
+      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy } : null,
       emulateTools, toolPreamble, wantJson,
     );
     if (result.status === 200) return result;
@@ -1173,7 +1196,7 @@ export async function handleChatCompletions(body, context = {}) {
       if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
         const availability = getAccountAvailability(acct.apiKey, modelKey);
         const retryAfterMs = strictReuseRetryMs(availability);
-        poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+        poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
         log.info(`Chat[${reqId}]: strict reuse preserved cascade after rate limit`);
         return {
           status: 429,
@@ -1213,7 +1236,7 @@ export async function handleChatCompletions(body, context = {}) {
   // 所有账号都遇到 Cascade transient 时，账号轮换已经无法修复；返回明确错误，避免误报成限流或模型不可用。
   if (internalCount > 0 && tried.length > 0 && internalCount >= tried.length) {
     if (checkedOutReuseEntry && fpBefore) {
-      poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+      poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
       log.info(`Chat[${reqId}]: restored checked-out cascade after all-internal-error chain`);
     }
     const lastIsTransport = isCascadeTransportError(lastErr);
@@ -1227,7 +1250,7 @@ export async function handleChatCompletions(body, context = {}) {
   const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
   if (temporaryUnavailable.allUnavailable) {
     if (checkedOutReuseEntry && fpBefore) {
-      poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+      poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
       log.info(`Chat[${reqId}]: restored checked-out cascade after temporary unavailability`);
     }
     const retryAfterSec = Math.ceil(temporaryUnavailable.retryAfterMs / 1000);
@@ -1247,7 +1270,7 @@ export async function handleChatCompletions(body, context = {}) {
     const rl = isAllRateLimited(modelKey);
     if (rl.allLimited) {
       if (checkedOutReuseEntry && fpBefore) {
-        poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+        poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
         log.info(`Chat[${reqId}]: restored checked-out cascade after rate limit`);
       }
       const retryAfterSec = Math.ceil(rl.retryAfterMs / 1000);
@@ -1255,7 +1278,7 @@ export async function handleChatCompletions(body, context = {}) {
     }
   }
   if (checkedOutReuseEntry && fpBefore) {
-    poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+    poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
     log.info(`Chat[${reqId}]: restored checked-out cascade after failed request`);
   }
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
@@ -1328,7 +1351,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         stepOffset: Number.isFinite(cascadeMeta.stepOffset) ? cascadeMeta.stepOffset : poolCtx.reuseEntry?.stepOffset,
         generatorOffset: Number.isFinite(cascadeMeta.generatorOffset) ? cascadeMeta.generatorOffset : poolCtx.reuseEntry?.generatorOffset,
         createdAt: poolCtx.reuseEntry?.createdAt,
-      }, poolCtx.callerKey || '');
+      }, poolCtx.callerKey || '', ttlHintFromCachePolicy(poolCtx.cachePolicy));
     }
 
     reportSuccess(apiKey);
@@ -1363,7 +1386,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
 
     // Prefer server-reported usage; fall back to chars/4 estimate only when
     // the trajectory didn't include a ModelUsageStats field.
-    const usage = buildUsageBody(serverUsage, messages, allText, allThinking);
+    const usage = buildUsageBody(serverUsage, messages, allText, allThinking, cachePolicy);
     const finishReason = toolCalls.length ? 'tool_calls' : 'stop';
     return {
       status: 200,
@@ -1762,7 +1785,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                 stepOffset: Number.isFinite(cascadeResult.stepOffset) ? cascadeResult.stepOffset : reuseEntry?.stepOffset,
                 generatorOffset: Number.isFinite(cascadeResult.generatorOffset) ? cascadeResult.generatorOffset : reuseEntry?.generatorOffset,
                 createdAt: reuseEntry?.createdAt,
-              }, callerKey);
+              }, callerKey, ttlHintFromCachePolicy(cachePolicy));
             }
             // success
             if (hadSuccess) reportSuccess(currentApiKey);
@@ -1792,7 +1815,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: {}, finish_reason: finalReason }] });
             {
-              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking);
+              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy);
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [], usage });
             }
@@ -1862,7 +1885,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             log.error(`Chat[${reqId}] stream: ${tried.length}/${tried.length} accounts hit upstream transient error — surfacing upstream_transient_error`);
           }
           if (!hadSuccess && checkedOutReuseEntry && fpBefore) {
-            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey);
+            poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: restored checked-out cascade after failed stream`);
           }
 
