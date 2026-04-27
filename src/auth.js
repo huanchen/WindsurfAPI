@@ -340,12 +340,18 @@ export function setAccountBlockedModels(id, blockedModels) {
 export function isModelAllowedForAccount(account, modelKey) {
   const blocked = account.blockedModels || [];
   if (blocked.includes(modelKey)) return false;
-  // GetUserStatus writes both arms — `user_status` for allowed and
-  // `not_entitled` for denied — into capabilities, keyed by enum.
-  // Either reason means the upstream allowlist has already spoken.
-  const cap = account.capabilities?.[modelKey];
-  if (cap?.reason === 'user_status' || cap?.reason === 'not_entitled') {
-    return cap.ok === true;
+  // tierManual is the operator escape hatch: when set, trust the manual
+  // tier table over GetUserStatus's per-account allowlist. Useful when
+  // probe-based detection misclassified a Pro/Trial account as free
+  // (issue #8) and the operator manually flips it back to Pro.
+  if (!account.tierManual) {
+    // GetUserStatus writes both arms — `user_status` for allowed and
+    // `not_entitled` for denied — into capabilities, keyed by enum.
+    // Either reason means the upstream allowlist has already spoken.
+    const cap = account.capabilities?.[modelKey];
+    if (cap?.reason === 'user_status' || cap?.reason === 'not_entitled') {
+      return cap.ok === true;
+    }
   }
   const tierModels = getTierModels(account.tier || 'unknown');
   return tierModels.includes(modelKey);
@@ -355,7 +361,8 @@ export function isModelAllowedForAccount(account, modelKey) {
 export function getAvailableModelsForAccount(account) {
   const blocked = new Set(account.blockedModels || []);
   const tierModels = getTierModels(account.tier || 'unknown');
-  if (!account.userStatusLastFetched || !account.capabilities) {
+  // Manual tier override or no GetUserStatus yet → tier static table.
+  if (account.tierManual || !account.userStatusLastFetched || !account.capabilities) {
     return tierModels.filter(m => !blocked.has(m));
   }
   // After GetUserStatus: per-account allowlist is authoritative for every

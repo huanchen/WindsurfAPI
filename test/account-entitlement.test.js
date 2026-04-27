@@ -64,6 +64,25 @@ describe('isModelAllowedForAccount — capabilities-first routing', () => {
     };
     assert.equal(isModelAllowedForAccount(account, 'gemini-2.5-flash'), true);
   });
+
+  it('manual tier=pro override unlocks all models even with not_entitled caps', () => {
+    // Operator escape hatch: probe misclassified a Pro trial as free,
+    // GetUserStatus then wrote not_entitled into every premium model's
+    // capability slot. Operator manually sets tier=pro; that should
+    // restore Pro entitlement until GetUserStatus reruns and corrects
+    // capabilities itself.
+    const account = {
+      tier: 'pro',
+      tierManual: true,
+      userStatusLastFetched: Date.now(),
+      capabilities: {
+        'claude-opus-4.6': { ok: false, reason: 'not_entitled', lastCheck: 1 },
+        'glm-4.7': { ok: false, reason: 'not_entitled', lastCheck: 1 },
+      },
+    };
+    assert.equal(isModelAllowedForAccount(account, 'claude-opus-4.6'), true);
+    assert.equal(isModelAllowedForAccount(account, 'glm-4.7'), true);
+  });
 });
 
 describe('getAvailableModelsForAccount — uses authoritative allowlist post-status', () => {

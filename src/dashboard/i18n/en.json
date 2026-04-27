@@ -587,10 +587,10 @@
     },
     "overrideTier": {
       "title": "Manually Set Account Tier",
-      "desc": "Current: {{current}}. Windsurf Pro trial sometimes fails auto-detection (issue #8 side effect), manually change to pro to unlock all Pro models.",
+      "desc": "Current: {{current}}. The proxy routes by Windsurf's upstream cascade_allowed_models_config (per-account — free accounts often include GLM / SWE / Kimi etc.). When the Pro trial mis-detects (issue #8), manually set to pro to force-unlock every model.",
       "options": {
-        "pro": "Pro (unlock all models)",
-        "free": "Free (gpt-4o-mini and gemini-2.5-flash only)",
+        "pro": "Pro (force-unlock all models)",
+        "free": "Free (route by upstream allowlist)",
         "unknown": "Unknown (let system re-evaluate)"
       }
     },

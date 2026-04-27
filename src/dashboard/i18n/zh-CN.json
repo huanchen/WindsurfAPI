@@ -587,10 +587,10 @@
     },
     "overrideTier": {
       "title": "手动设置账号层级",
-      "desc": "当前：{{current}}。Windsurf Pro 试用有时自动探测失败（issue #8 的连锁影响），手动改成 pro 即可解锁所有 Pro 模型。",
+      "desc": "当前：{{current}}。系统优先按 Windsurf 上游的 cascade_allowed_models_config 路由（每个号实际能用什么模型上游说了算，常见免费号会含 GLM / SWE / Kimi 等）。Pro 试用偶尔被探测错（issue #8）时手动改成 pro 即可强制解锁所有模型。",
       "options": {
-        "pro": "Pro（解锁所有模型）",
-        "free": "Free（仅 gpt-4o-mini 和 gemini-2.5-flash）",
+        "pro": "Pro（强制解锁所有模型）",
+        "free": "Free（按上游 allowlist 路由）",
         "unknown": "Unknown（让系统重新判定）"
       }
     },
