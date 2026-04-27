@@ -4,13 +4,42 @@ import { emitNoAuthWarnings, initAuth, isAuthenticated, saveAccountsSync } from 
 import { startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 export { VERSION, BRAND };
+
+function workspaceBase() {
+  const tmpDir = process.env.TEMP || process.env.TMP || tmpdir();
+  const suffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
+  return join(tmpDir, `windsurf-workspace${suffix}`);
+}
+
+function resetWorkspace() {
+  // Wipe the workspace on every startup. If we don't, files created by
+  // previous chat sessions (e.g. Claude "editing" config.yaml/lru_cache.py
+  // via the baked-in Cascade tool prompts) persist and pollute the next
+  // request — the model sees them at session init and starts narrating
+  // edits to files the caller never mentioned.
+  //
+  // Using Node fs APIs instead of an `execSync('mkdir -p ... && rm -rf')`
+  // shell pipeline so this is correct on Windows, macOS, and Linux without
+  // depending on a POSIX shell.
+  const wsBase = workspaceBase();
+  try {
+    mkdirSync(wsBase, { recursive: true });
+    for (const name of readdirSync(wsBase)) {
+      try { rmSync(join(wsBase, name), { recursive: true, force: true }); } catch {}
+    }
+  } catch {}
+  try {
+    mkdirSync(join('/opt/windsurf/data', 'db'), { recursive: true });
+  } catch {}
+}
 
 async function main() {
   const banner = `
@@ -60,16 +89,7 @@ async function main() {
   }
 
   if (existsSync(binaryPath)) {
-    try {
-      // Wipe the workspace on every startup. If we don't, files created by
-      // previous chat sessions (e.g. Claude "editing" config.yaml/lru_cache.py
-      // via the baked-in Cascade tool prompts) persist and pollute the next
-      // request — the model sees them at session init and starts narrating
-      // edits to files the caller never mentioned.
-      const wsSuffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
-      const wsBase = `/tmp/windsurf-workspace${wsSuffix}`;
-      execSync(`mkdir -p /opt/windsurf/data/db "${wsBase}" && rm -rf "${wsBase}"/* "${wsBase}"/.[!.]* 2>/dev/null || true`, { stdio: 'ignore' });
-    } catch {}
+    resetWorkspace();
 
     await startLanguageServer({
       binaryPath,

@@ -3742,8 +3742,8 @@ const App = {
   //
   // Uses fetch + ReadableStream instead of EventSource so the dashboard
   // password rides in an X-Dashboard-Password header rather than a ?pwd=
-  // query string (URL-logged in proxies, browser history). checkAuth()
-  // in dashboard/api.js still accepts ?pwd= as a fallback.
+  // query string (URL-logged in proxies, browser history). The query
+  // fallback in dashboard/api.js was removed once all callers migrated.
   loadLogs() {
     if (this.sseConn) { try { this.sseConn.close(); } catch {} this.sseConn = null; }
     this.logEntries = [];

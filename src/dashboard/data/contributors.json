@@ -10,6 +10,33 @@
       "summary": "我之前那条 #63 已经把 sandleft 标过 S 级，#72 是第二次出手，质量稳。Codex Responses API 的四种非 function tool（custom / namespace / web_search / tool_search）反代之前直接 throw `Unsupported Responses tool type` 把整个请求干 500。这个 PR 不只是丢弃—— flattenResponseTool 把 namespace 用 `__` 分隔扁平化展开成 function，custom 转成单 string `input` 函数，web_search/tool_search 给到 `query` 函数；同时回程通过 `__response_tool` metadata 把原 type / namespace / originalName 还原回 `custom_tool_call` / `web_search_call` / 带 namespace 的 `function_call`。流式分支里 tool name 后到的 chunk 也兜住了。第一轮 PR review 我点出 tool_choice 没翻译 + 流式回转 metadata 透传不全 + 0 测试三个问题，sandleft 全补了，加了 4 条最小测试覆盖关键路径。我 cherry-pick 时叠了一层 UNBRIDGED 集合让 file_search / computer_use_preview / mcp 走 silent drop，web_search_preview 走和 web_search 一样的翻译，最后 fallback 是 warn-and-drop 不再 throw。"
     },
     {
+      "login": "ZLin98",
+      "pr": 80,
+      "weight": "A",
+      "weightLabel": "安全加固先行者：LS env allowlist + 跨平台 workspace + dashboard auth 收紧",
+      "mergedAt": "2026-04-27",
+      "title": "Harden defaults and add secure startup launcher",
+      "summary": "#80 一次塞了 16 个文件 700 行的安全加固大改，原 PR 因为面太大不便逐项 review 被关掉，这是当时处置不到位的一条 —— v2.0.12 单独把安全方向最稳的三件事 cherry-pick 进主线，作者署名通过 Co-authored-by trailer 保留。① LS env allowlist：以前直接把整份 process.env 喂给 LS 子进程，AWS_SECRET / GITHUB_TOKEN / 任何 CI secret 都漏出去；新加 `buildLanguageServerEnv` 只白名单 HOME / PATH / LANG / TMPDIR / proxy / SSL trust 八类，剩下全部丢弃，并保留 proxy override 与 /root fallback 两条原行为。② 跨平台 workspace 重置：以前用 `execSync('mkdir -p /tmp/... && rm -rf')` 走 POSIX shell，Windows 直接炸；改用 Node fs `mkdirSync + readdirSync + rmSync`，三大平台一致行为。③ Dashboard auth 收紧：移除 `?pwd=` query string fallback —— logs/stream 早就从 EventSource 迁到 fetch + ReadableStream，query 路径已无客户端在用，留着只会让 password 进 URL 访问日志和浏览器历史。其余 6 项（HOST 默认 127.0.0.1 + ensurePublicAuth、ENABLE_SELF_UPDATE/BATCH_LOGIN/LS_RESTART feature flag 默认全关、`getAccountList` 默认不返完整 apiKey、sessionStorage 替代 localStorage、FORWARD_CALLER_ENV opt-in、scripts/start.js launcher）都是行为变化或 UX 倒退，没并是怕一次性破坏现有 docker / dashboard 部署，但思路完全合理。"
+    },
+    {
+      "login": "Yuuqq",
+      "pr": 73,
+      "weight": "B+",
+      "weightLabel": "Windows 兼容性首位实测人 + 三处稳定性修复",
+      "mergedAt": "2026-04-26",
+      "title": "fix: Windows compatibility + 6 bug fixes",
+      "summary": "Windows 上跑 WindsurfAPI 的第一手反馈。#73 一次扫了 7 处 bug，处置时挑了三处方向干净的落进 commit `44ad502`，作者署名走 Co-authored-by trailer：① `src/sanitize.js` 用 `fileURLToPath(import.meta.url)` 替代手撸 `file://` 转换 —— Windows 上 URL pathname 是 `/e:/path` 形式，老正则把 repo root 解析成空串，所有 sanitize 标记都失效；② `src/server.js` 让 OPTIONS preflight 真返 204 No Content + 显式 CORS 头（含 `anthropic-version`），不再让 OPTIONS fall through 到 JSON 200/404 body；③ `src/conversation-pool.js` 动态扩 META_TAG_NAMES 时给名字做 regex escape，防止用户消息里的 `<example.*>` 之类 tag 名注入元字符破坏整张 strip 表。其余四处（LS health watchdog、HTTP 明文 SEC warning、Windows langserver 路径重排）是因为跟现网部署有交互需要单独验证才没并，不是否定。"
+    },
+    {
+      "login": "abwuge",
+      "pr": 65,
+      "weight": "A",
+      "weightLabel": "GHCR + GitHub Release 自动发布流水线",
+      "mergedAt": "2026-04-25",
+      "title": "ci: add release workflow (Docker + GitHub Release)",
+      "summary": "abwuge 在 #58 nginx + Node import 修复之后又出手 —— 这次直接把 release pipeline 搭起来。`.github/workflows/release.yml` 一条 workflow 触发 git tag 时同步做三件事：构建 multi-arch Docker 镜像 push 到 GHCR、生成 GitHub Release（带自动从 commits 提取的 changelog body）、把 release notes 文件作为 attachment 上传。docker-compose 默认 image 改指 `ghcr.io/dwgx/windsurf-api:latest`，零 npm 依赖的部署链就此打通。后续 v2.0.6 ~ 2.0.11 全部按这个 workflow 在跑，每次 bump 一推 tag 镜像就到位 —— 这是项目从手工 build 到 CI/CD 的关键一跳。"
+    },
+    {
       "login": "baily-zhang",
       "pr": 62,
       "weight": "S+",

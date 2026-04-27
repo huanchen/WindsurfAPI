@@ -58,6 +58,39 @@ function proxyUrl(proxy) {
   return `http://${auth}${proxy.host}:${proxy.port || 8080}`;
 }
 
+// Pass only what the LS binary actually needs to its child env. Forwarding
+// the full process.env exposed unrelated proxy secrets / build env / CI
+// tokens to a binary we don't fully control. Allowlist covers HOME (asset
+// paths), PATH (subprocess discovery), LANG/locale, TMPDIR, and the proxy
+// vars that the LS reads to dial out.
+const LS_ENV_ALLOWLIST = [
+  'HOME', 'PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'TMP', 'TEMP',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+  // SSL trust roots — without these LS can fail to verify the upstream
+  // Codeium endpoint on hardened hosts.
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+];
+
+export function buildLanguageServerEnv(source = process.env, options = {}) {
+  const env = {};
+  for (const key of LS_ENV_ALLOWLIST) {
+    if (source[key] != null && source[key] !== '') env[key] = source[key];
+  }
+  // Fall back to /root only when HOME isn't already set (e.g. a systemd
+  // unit without User=). VPS deployments already have HOME in env; forcing
+  // /root broke macOS/Windows dev runs where LS expects the real $HOME.
+  if (!env.HOME) env.HOME = source.HOME || '/root';
+  const pUrl = options.proxyUrl || null;
+  if (pUrl) {
+    env.HTTPS_PROXY = pUrl;
+    env.HTTP_PROXY = pUrl;
+    env.https_proxy = pUrl;
+    env.http_proxy = pUrl;
+  }
+  return env;
+}
+
 export function redactProxyUrl(urlOrProxy) {
   if (!urlOrProxy) return 'none';
   if (typeof urlOrProxy === 'object') {
@@ -161,18 +194,8 @@ export async function ensureLs(proxy = null) {
       '--detect_proxy=false',
     ];
 
-    // Fall back to /root only when HOME isn't already set (e.g. a systemd
-    // unit without User=). VPS deployments already have HOME in env; forcing
-    // /root broke macOS/Windows dev runs where LS expects the real $HOME.
-    const env = { ...process.env };
-    if (!env.HOME) env.HOME = '/root';
     const pUrl = proxyUrl(proxy);
-    if (pUrl) {
-      env.HTTPS_PROXY = pUrl;
-      env.HTTP_PROXY = pUrl;
-      env.https_proxy = pUrl;
-      env.http_proxy = pUrl;
-    }
+    const env = buildLanguageServerEnv(process.env, { proxyUrl: pUrl });
 
     // One-shot readable warning when the LS binary is missing — the generic
     // ENOENT from spawn leaves users guessing which file is expected.
