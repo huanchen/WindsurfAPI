@@ -1,6 +1,15 @@
 {
   "contributors": [
     {
+      "login": "sandleft",
+      "pr": 72,
+      "weight": "S",
+      "weightLabel": "Codex Responses native tools 完整翻译层",
+      "mergedAt": "2026-04-27",
+      "title": "fix: add Codex Responses tool compatibility",
+      "summary": "我之前那条 #63 已经把 sandleft 标过 S 级，#72 是第二次出手，质量稳。Codex Responses API 的四种非 function tool（custom / namespace / web_search / tool_search）反代之前直接 throw `Unsupported Responses tool type` 把整个请求干 500。这个 PR 不只是丢弃—— flattenResponseTool 把 namespace 用 `__` 分隔扁平化展开成 function，custom 转成单 string `input` 函数，web_search/tool_search 给到 `query` 函数；同时回程通过 `__response_tool` metadata 把原 type / namespace / originalName 还原回 `custom_tool_call` / `web_search_call` / 带 namespace 的 `function_call`。流式分支里 tool name 后到的 chunk 也兜住了。第一轮 PR review 我点出 tool_choice 没翻译 + 流式回转 metadata 透传不全 + 0 测试三个问题，sandleft 全补了，加了 4 条最小测试覆盖关键路径。我 cherry-pick 时叠了一层 UNBRIDGED 集合让 file_search / computer_use_preview / mcp 走 silent drop，web_search_preview 走和 web_search 一样的翻译，最后 fallback 是 warn-and-drop 不再 throw。"
+    },
+    {
       "login": "baily-zhang",
       "pr": 62,
       "weight": "S+",
