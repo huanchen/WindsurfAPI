@@ -2,14 +2,18 @@
  * HTTP/2 client for the local Windsurf language server binary.
  * Supports both gRPC and Connect-RPC protocols.
  *
- * Connect by default; set GRPC_PROTOCOL=grpc to use legacy gRPC for debugging.
+ * Default: legacy gRPC framing (verified working with LS 2.12.5 against
+ * production cascade flow). Set GRPC_PROTOCOL=connect to opt in to Connect
+ * framing — note: as of v2.0.20, Connect default returned empty cascade_id
+ * from StartCascade against the production LS, so we keep legacy as default
+ * until the Connect response parser is debugged. Tracked for v2.0.22+.
  */
 
 import http2 from 'http2';
 import { log } from './config.js';
 import { wrapRequest, StreamingFrameParser } from './connect.js';
 
-const USE_CONNECT = process.env.GRPC_PROTOCOL !== 'grpc';
+const USE_CONNECT = process.env.GRPC_PROTOCOL === 'connect';
 export const _USE_CONNECT_FOR_TEST = USE_CONNECT;
 
 // ─── HTTP/2 session pool ───────────────────────────────────
