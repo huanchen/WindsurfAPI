@@ -66,6 +66,43 @@ describe('responsesToChat', () => {
     assert.equal(out.reasoning_effort, 'medium');
   });
 
+  it('maps Responses text.format json_schema to chat response_format', () => {
+    const schema = {
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    };
+    const out = responsesToChat({
+      input: 'extract title',
+      text: { format: { type: 'json_schema', name: 'title_response', schema, strict: false } },
+    });
+    assert.deepEqual(out.response_format, {
+      type: 'json_schema',
+      json_schema: {
+        name: 'title_response',
+        schema,
+        strict: false,
+      },
+    });
+  });
+
+  it('maps Responses text.format json_object to chat response_format', () => {
+    const out = responsesToChat({
+      input: 'return JSON',
+      text: { format: { type: 'json_object' } },
+    });
+    assert.deepEqual(out.response_format, { type: 'json_object' });
+  });
+
+  it('defaults json_schema strict to false (OpenAI Responses spec) when omitted', () => {
+    const out = responsesToChat({
+      input: 'extract title',
+      text: { format: { type: 'json_schema', name: 'title_response', schema: { type: 'object' } } },
+    });
+    assert.equal(out.response_format.json_schema.strict, false);
+  });
+
   it('maps message item arrays and function tools', () => {
     const out = responsesToChat({
       input: [

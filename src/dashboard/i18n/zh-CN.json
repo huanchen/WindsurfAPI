@@ -237,6 +237,10 @@
       "title": "系统提示词",
       "desc": "工具注入、对话模式等内置提示词模板。修改后立即生效，点「重置」恢复默认。"
     },
+    "skin": {
+      "title": "界面风格",
+      "desc": "控制台外观。默认现代风；手绘草稿风是实验性简化布局。切换后页面会刷新。"
+    },
     "lsPool": {
       "title": "语言服务器池",
       "desc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程",
@@ -287,6 +291,12 @@
     "token": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用",
     "tokenGuide": "推荐用 Token 方式添加账号 点 ",
     "tokenGuideEnd": " 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
+  },
+
+  "skin": {
+    "modern": "默认现代风",
+    "sketch": "手绘草稿风（实验）",
+    "hint": "选择后立即写入 cookie 并刷新"
   },
 
   "field": {

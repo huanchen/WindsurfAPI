@@ -386,13 +386,15 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
 const TOOL_PARSE_MODE = process.env.TOOL_PARSE_MODE || 'auto';
 
 export class ToolCallStreamParser {
-  constructor() {
+  constructor(options = {}) {
     this.buffer = '';
     this.inToolCall = false;
     this.inToolResult = false;
     this.inToolCode = false;
     this.inBareCall = false;
     this._totalSeen = 0;
+    this.parseToolCode = options.parseToolCode !== false;
+    this.parseBareJson = options.parseBareJson !== false;
   }
 
   _findClosingBrace() {
@@ -538,8 +540,8 @@ export class ToolCallStreamParser {
       const mode = TOOL_PARSE_MODE;
       const tcIdx = (mode === 'auto' || mode === 'xml') ? this.buffer.indexOf(TC_OPEN) : -1;
       const trIdx = this.buffer.indexOf(TR_PREFIX);
-      const tcCodeIdx = (mode === 'auto' || mode === 'tool_code') ? this.buffer.indexOf(TC_CODE) : -1;
-      const tcBareIdx = (mode === 'auto' || mode === 'json') ? this.buffer.indexOf(TC_BARE) : -1;
+      const tcCodeIdx = this.parseToolCode && (mode === 'auto' || mode === 'tool_code') ? this.buffer.indexOf(TC_CODE) : -1;
+      const tcBareIdx = this.parseBareJson && (mode === 'auto' || mode === 'json') ? this.buffer.indexOf(TC_BARE) : -1;
 
       let nextIdx = -1;
       let tagType = null;
@@ -556,7 +558,10 @@ export class ToolCallStreamParser {
 
       if (nextIdx === -1) {
         let holdLen = 0;
-        for (const prefix of [TC_OPEN, TR_PREFIX, TC_CODE, TC_BARE]) {
+        const holdPrefixes = [TC_OPEN, TR_PREFIX];
+        if (this.parseToolCode) holdPrefixes.push(TC_CODE);
+        if (this.parseBareJson) holdPrefixes.push(TC_BARE);
+        for (const prefix of holdPrefixes) {
           const maxHold = Math.min(prefix.length - 1, this.buffer.length);
           for (let len = maxHold; len > 0; len--) {
             if (this.buffer.endsWith(prefix.slice(0, len))) {
@@ -662,4 +667,11 @@ export function parseToolCallsFromText(text) {
     text: a.text + b.text,
     toolCalls: [...a.toolCalls, ...b.toolCalls],
   };
+}
+
+export function stripToolMarkupFromText(text) {
+  const parser = new ToolCallStreamParser({ parseToolCode: false, parseBareJson: false });
+  const a = parser.feed(text);
+  const b = parser.flush();
+  return a.text + b.text;
 }

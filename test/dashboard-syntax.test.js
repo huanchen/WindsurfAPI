@@ -21,3 +21,19 @@ for (const skin of ['src/dashboard/index.html', 'src/dashboard/index-sketch.html
     }
   });
 }
+
+test('dashboard system prompt editor escapes prompt keys before rendering or routing', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
+  assert.match(html, /const safeKey = this\.esc\(key\)/);
+  assert.match(html, /const keyArg = this\.escJsAttr\(key\)/);
+  assert.match(html, /this\.systemPromptDomId\(key\)/);
+  assert.match(html, /encodeURIComponent\(key\)/);
+  assert.doesNotMatch(html, /\$\{key\}<\/code>/);
+  assert.doesNotMatch(html, /resetSystemPrompt\('\$\{key\}'\)/);
+});
+
+test('dashboard batch login history uses each result proxy instead of an undefined local', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
+  assert.match(html, /proxy:\s*this\.getWindsurfProxyLabel\(item\.proxy\)/);
+  assert.doesNotMatch(html, /proxy:\s*this\.getWindsurfProxyLabel\(proxy\),\s*\r?\n\s*status:\s*item\.success/);
+});

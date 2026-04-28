@@ -3,6 +3,48 @@ import assert from 'node:assert/strict';
 import { annotateRiskyReadToolResult, extractCallerSubKey, handleMessages } from '../src/handlers/messages.js';
 import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
 
+function chatChunk(chunk) {
+  return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
+function fakeRes() {
+  const listeners = new Map();
+  return {
+    body: '',
+    writableEnded: false,
+    write(chunk) {
+      this.body += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      return true;
+    },
+    end(chunk) {
+      if (chunk) this.write(chunk);
+      this.writableEnded = true;
+      const cbs = listeners.get('close') || [];
+      for (const cb of cbs) cb();
+    },
+    on(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+      return this;
+    },
+  };
+}
+
+function parseAnthropicEvents(raw) {
+  return raw
+    .trim()
+    .split('\n\n')
+    .filter(Boolean)
+    .filter(frame => !frame.startsWith(':'))
+    .map(frame => {
+      const lines = frame.split('\n');
+      return {
+        event: lines.find(line => line.startsWith('event: '))?.slice(7),
+        data: JSON.parse(lines.find(line => line.startsWith('data: '))?.slice(6) || '{}'),
+      };
+    });
+}
+
 describe('Anthropic messages request translation', () => {
   afterEach(() => {
     // No shared mutable state in these tests, but keep the hook here so this
@@ -54,6 +96,7 @@ describe('Anthropic messages request translation', () => {
       let capturedBody = null;
       const result = await handleMessages({
         model: 'claude-sonnet-4.6',
+        tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
         tool_choice: testCase.input,
         messages: [{ role: 'user', content: 'hi' }],
       }, {
@@ -337,6 +380,74 @@ describe('Anthropic messages request translation', () => {
     assert.equal(capturedBody.tools, undefined);
   });
 
+  it('drops a forced server-side tool_choice when the matching tool was stripped', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [
+        { type: 'advisor_20260301', name: 'advisor', model: 'claude-opus-4-6' },
+        { name: 'Read', description: 'read files', input_schema: { type: 'object' } },
+      ],
+      tool_choice: { type: 'tool', name: 'advisor' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.equal(capturedBody.tools.length, 1);
+    assert.equal(capturedBody.tools[0].function.name, 'Read');
+    assert.equal(capturedBody.tool_choice, undefined);
+  });
+
+  it('buffers streaming tool argument deltas until tool id and name arrive', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      messages: [{ role: 'user', content: 'read package.json' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"file_path"' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'Read', arguments: ':"package.json"' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '}' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }));
+            res.write(chatChunk({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const blockStart = events.find(e => e.event === 'content_block_start');
+    assert.deepEqual(blockStart.data.content_block, {
+      type: 'tool_use',
+      id: 'call_1',
+      name: 'Read',
+      input: {},
+    });
+    const partialJson = events
+      .filter(e => e.event === 'content_block_delta' && e.data.delta?.type === 'input_json_delta')
+      .map(e => e.data.delta.partial_json)
+      .join('');
+    assert.equal(partialJson, '{"file_path":"package.json"}');
+  });
+
   it('preserves thinking.type=adaptive (Claude Code 2.x sonnet default) when forwarding', async () => {
     let capturedBody = null;
     await handleMessages({
@@ -368,6 +479,11 @@ describe('Anthropic messages request translation', () => {
     assert.equal(isExplicitJsonRequested([
       { role: 'user', content: 'Tell me about JSON as a data format.' },
     ]), false);
+    assert.equal(isExplicitJsonRequested([
+      { role: 'user', content: 'Answer only compact JSON with name and version.' },
+      { role: 'assistant', content: '{"name":"windsurf-api","version":"2.0.14"}' },
+      { role: 'user', content: 'Now explain what changed in prose.' },
+    ]), false);
   });
 
   it('extracts explicitly requested final JSON keys', () => {
@@ -377,6 +493,11 @@ describe('Anthropic messages request translation', () => {
     assert.deepEqual(extractRequestedJsonKeys(applyJsonResponseHint([
       { role: 'user', content: 'answer only compact JSON with exact keys readVersion, bashVersion, versionsMatch and no other keys.' },
     ])), ['readVersion', 'bashVersion', 'versionsMatch']);
+    assert.deepEqual(extractRequestedJsonKeys([
+      { role: 'user', content: 'answer only compact JSON with exact keys name and version.' },
+      { role: 'assistant', content: '{"name":"windsurf-api","version":"2.0.14"}' },
+      { role: 'user', content: 'Now answer normally.' },
+    ]), []);
   });
 
   it('adds JSON-only guidance for clients that ask for JSON in text', () => {

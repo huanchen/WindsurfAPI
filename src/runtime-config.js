@@ -33,6 +33,8 @@ const DEFAULTS = {
   },
 };
 
+const SYSTEM_PROMPT_KEYS = new Set(Object.keys(DEFAULTS.systemPrompts));
+
 function deepMerge(base, override) {
   if (!override || typeof override !== 'object') return base;
   const out = { ...base };
@@ -97,13 +99,20 @@ export function setExperimental(patch) {
 }
 
 export function getSystemPrompts() {
-  return { ...DEFAULTS.systemPrompts, ...(_state.systemPrompts || {}) };
+  const out = { ...DEFAULTS.systemPrompts };
+  for (const key of SYSTEM_PROMPT_KEYS) {
+    if (typeof _state.systemPrompts?.[key] === 'string') {
+      out[key] = _state.systemPrompts[key];
+    }
+  }
+  return out;
 }
 
 export function setSystemPrompts(patch) {
   if (!patch || typeof patch !== 'object') return getSystemPrompts();
   const current = _state.systemPrompts || {};
   for (const [k, v] of Object.entries(patch)) {
+    if (!SYSTEM_PROMPT_KEYS.has(k)) continue;
     if (typeof v !== 'string') continue;
     current[k] = v.trim();
   }
@@ -113,8 +122,11 @@ export function setSystemPrompts(patch) {
 }
 
 export function resetSystemPrompt(key) {
-  if (key && _state.systemPrompts) delete _state.systemPrompts[key];
-  else _state.systemPrompts = {};
+  if (key) {
+    if (_state.systemPrompts && SYSTEM_PROMPT_KEYS.has(key)) delete _state.systemPrompts[key];
+  } else {
+    _state.systemPrompts = {};
+  }
   persist();
   return getSystemPrompts();
 }

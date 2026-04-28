@@ -237,6 +237,10 @@
       "title": "System Prompts",
       "desc": "Tool injection, conversation mode and other built-in prompt templates. Changes take effect immediately; click \"Reset\" to restore defaults."
     },
+    "skin": {
+      "title": "Interface Style",
+      "desc": "Dashboard appearance. Modern is the default; sketch is an experimental simplified layout. The page refreshes after switching."
+    },
     "lsPool": {
       "title": "Language Server Pool",
       "desc": "{{count}} LS instances · one process per dedicated proxy",
@@ -287,6 +291,12 @@
     "token": "Recommended: Use Token method. Visit {{link}} after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub).",
     "tokenGuide": "Recommended: Use Token method. Visit ",
     "tokenGuideEnd": " after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub)."
+  },
+
+  "skin": {
+    "modern": "Modern",
+    "sketch": "Sketch (Experimental)",
+    "hint": "Saved to cookie and refreshed immediately"
   },
 
   "field": {

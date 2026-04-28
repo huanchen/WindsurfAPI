@@ -219,6 +219,25 @@ function normalizeResponseToolChoice(toolChoice) {
   return toolChoice;
 }
 
+function normalizeResponseTextFormat(format) {
+  if (!format || typeof format !== 'object') return null;
+  if (format.type === 'json_object') return { type: 'json_object' };
+  if (format.type !== 'json_schema') return null;
+  const nested = format.json_schema && typeof format.json_schema === 'object'
+    ? format.json_schema
+    : null;
+  const schema = format.schema || nested?.schema;
+  if (!schema) return null;
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.name || nested?.name || 'response',
+      schema,
+      strict: format.strict ?? nested?.strict ?? false,
+    },
+  };
+}
+
 
 export function responsesToChat(body) {
   const messages = [];
@@ -286,6 +305,7 @@ export function responsesToChat(body) {
   }
 
   const tools = flattenResponseTools(body.tools || []);
+  const responseFormat = normalizeResponseTextFormat(body.text?.format);
   return {
     model: body.model || 'claude-sonnet-4.6',
     messages,
@@ -296,6 +316,7 @@ export function responsesToChat(body) {
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { top_p: body.top_p } : {}),
     ...(body.tool_choice != null ? { tool_choice: normalizeResponseToolChoice(body.tool_choice) } : {}),
+    ...(responseFormat ? { response_format: responseFormat } : {}),
   };
 }
 

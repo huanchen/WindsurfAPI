@@ -120,6 +120,14 @@ function anthropicToOpenAI(body) {
     }
     return toolChoice;
   };
+  const pruneToolChoice = (toolChoice, forwardedTools) => {
+    if (!toolChoice || !forwardedTools.length) return undefined;
+    if (toolChoice.type === 'function') {
+      const names = new Set(forwardedTools.map(t => t.function?.name).filter(Boolean));
+      return names.has(toolChoice.function?.name) ? toolChoice : undefined;
+    }
+    return toolChoice;
+  };
   const messages = [];
   const toolNameById = new Map();
   if (body.system) {
@@ -210,6 +218,10 @@ function anthropicToOpenAI(body) {
   if (droppedServerTools.length) {
     log.info(`messages: dropped ${droppedServerTools.length} server-side tool(s) [${[...new Set(droppedServerTools)].join(',')}] - proxy does not implement them yet`);
   }
+  const forwardedToolChoice = pruneToolChoice(
+    body.tool_choice ? mapAnthropicToolChoice(body.tool_choice) : undefined,
+    tools,
+  );
   // Claude Code 2.x and Anthropic SDK clients send response shape and
   // reasoning controls inside body.output_config — output_config.effort
   // mirrors OpenAI's reasoning_effort, and output_config.format carries
@@ -241,7 +253,7 @@ function anthropicToOpenAI(body) {
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { top_p: body.top_p } : {}),
     ...(body.stop_sequences ? { stop: body.stop_sequences } : {}),
-    ...(body.tool_choice ? { tool_choice: mapAnthropicToolChoice(body.tool_choice) } : {}),
+    ...(forwardedToolChoice ? { tool_choice: forwardedToolChoice } : {}),
     ...(body.thinking ? { thinking: body.thinking } : {}),
     ...(ocEffort ? { reasoning_effort: ocEffort } : {}),
     ...(translatedResponseFormat ? { response_format: translatedResponseFormat } : {}),
@@ -430,18 +442,38 @@ class AnthropicStreamTranslator {
 
   emitToolCallDelta(toolCall) {
     const idx = toolCall.index ?? 0;
-    const existing = this.toolCallBufs.get(idx);
+    let existing = this.toolCallBufs.get(idx);
     const id = toolCall.id || existing?.id;
     const name = toolCall.function?.name || existing?.name;
     const argsChunk = toolCall.function?.arguments || '';
 
     if (!existing) {
-      // New tool call — start a new tool_use content block
-      this.startBlock('tool_use', { id, name });
-      this.toolCallBufs.set(idx, { id, name, blockIndex: this.current.index, argsBuffered: '' });
+      existing = { id, name, blockIndex: null, argsBuffered: '', pendingArgs: '' };
+      this.toolCallBufs.set(idx, existing);
+    } else {
+      if (id) existing.id = id;
+      if (name) existing.name = name;
     }
     const buf = this.toolCallBufs.get(idx);
+    if (buf.blockIndex == null && buf.id && buf.name) {
+      this.startBlock('tool_use', { id: buf.id, name: buf.name });
+      buf.blockIndex = this.current.index;
+      if (buf.pendingArgs) {
+        const pending = buf.pendingArgs;
+        buf.pendingArgs = '';
+        buf.argsBuffered += pending;
+        this.send('content_block_delta', {
+          type: 'content_block_delta',
+          index: buf.blockIndex,
+          delta: { type: 'input_json_delta', partial_json: pending },
+        });
+      }
+    }
     if (argsChunk) {
+      if (buf.blockIndex == null) {
+        buf.pendingArgs += argsChunk;
+        return;
+      }
       buf.argsBuffered += argsChunk;
       this.send('content_block_delta', {
         type: 'content_block_delta',

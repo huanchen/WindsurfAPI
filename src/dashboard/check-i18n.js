@@ -44,7 +44,9 @@ const CHINESE_REGEX = /[\u4e00-\u9fff]/;
 
 // Patterns that are allowed to contain Chinese (whitelisted)
 const WHITELIST_PATTERNS = [
-  /data-i18n=/,  // i18n attributes are ok
+  /data-i18n(?:-[\w-]+)?=/,  // i18n attributes are ok
+  /id="lang-indicator"/, // compact language toggle label
+  /indicator\.textContent\s*=/, // compact language toggle label
   /\/\/.*/,      // comments
   /https?:\/\//,  // URLs
   /windsurf\.com/, // windsurf domain
@@ -169,6 +171,7 @@ while ((match = i18nRegex.exec(htmlContent)) !== null) {
 // Check if all used keys exist in locales
 const missingInLocales = [];
 for (const key of usedKeys) {
+  if (key.includes('${')) continue;
   // Navigate nested key path
   const parts = key.split('.');
   let enVal = enJson;
@@ -221,7 +224,7 @@ const uniqueJsKeys = [...new Set(jsKeys)];
 const missingJsKeys = [];
 for (const key of uniqueJsKeys) {
   // Skip template expressions and variables
-  if (key.includes('${') || key === 'key' || key.includes('?') || key.includes('vars')) continue;
+  if (key.includes('${') || key === 'key' || key.includes('?') || key.includes('vars') || key.endsWith('.') || key.includes('+')) continue;
 
   // Navigate nested key path
   const parts = key.split('.');

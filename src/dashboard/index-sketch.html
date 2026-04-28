@@ -2127,6 +2127,9 @@ const App = {
     if (s == null) return '';
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   },
+  systemPromptDomId(key) {
+    return `sp-${encodeURIComponent(String(key == null ? '' : key)).replace(/%/g, '_')}`;
+  },
   escAttr(s) { return this.esc(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
 
   /* ── toast ── */
@@ -3169,21 +3172,25 @@ const App = {
       holder.innerHTML = '<div class="text-mute italic">no editable prompts on this backend</div>';
       return;
     }
-    holder.innerHTML = keys.map(k => `
+    holder.innerHTML = keys.map(k => {
+      const keyArg = this.escAttr(k);
+      const promptId = this.systemPromptDomId(k);
+      return `
       <div style="border:1px dashed var(--rule-soft);padding:12px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <div><code style="color:var(--accent);font-weight:600">${this.esc(k)}</code></div>
           <div class="field-row-actions" style="margin:0">
-            <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${this.escAttr(k)}')">reset</button>
-            <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${this.escAttr(k)}')">save</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${keyArg}')">reset</button>
+            <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${keyArg}')">save</button>
           </div>
         </div>
-        <textarea id="sp-${this.esc(k)}" class="input mono" rows="3" style="width:100%;resize:vertical">${this.esc(prompts[k] || '')}</textarea>
+        <textarea id="${promptId}" class="input mono" rows="3" style="width:100%;resize:vertical">${this.esc(prompts[k] || '')}</textarea>
       </div>
-    `).join('');
+    `;
+    }).join('');
   },
   async saveSystemPrompt(key) {
-    const ta = document.getElementById(`sp-${key}`);
+    const ta = document.getElementById(this.systemPromptDomId(key));
     if (!ta) return;
     await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
     this.toast(`${key} saved`);
@@ -3191,7 +3198,7 @@ const App = {
   async resetSystemPrompt(key) {
     const ok = await this.confirm('reset prompt', `restore default for ${key}?`, { okText: 'reset' });
     if (!ok) return;
-    await this.api('DELETE', `/system-prompts/${key}`);
+    await this.api('DELETE', `/system-prompts/${encodeURIComponent(key)}`);
     this.toast(`${key} reset`);
     this.loadExperimental();
   },

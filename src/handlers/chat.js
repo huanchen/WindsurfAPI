@@ -19,7 +19,7 @@ import {
   fingerprintBefore, fingerprintAfter, checkout as poolCheckout, checkin as poolCheckin,
 } from '../conversation-pool.js';
 import {
-  normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText,
+  normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText, stripToolMarkupFromText,
   buildToolPreambleForProto, buildCompactToolPreambleForProto,
 } from './tool-emulation.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
@@ -145,34 +145,37 @@ function textFromMessageContent(content) {
 
 export function extractRequestedJsonKeys(messages) {
   if (!Array.isArray(messages)) return [];
+  const text = latestRealUserText(messages)?.split('\n\n[You MUST respond with valid JSON only.')[0] || '';
+  if (!text) return [];
+  const match = text.match(/\b(?:exact\s+)?keys\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
+  if (!match) return [];
+  return match[1]
+    .replace(/\s+(?:and|&)\s+/gi, ',')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function latestRealUserText(messages) {
+  if (!Array.isArray(messages)) return '';
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
-    const text = textFromMessageContent(m.content).split('\n\n[You MUST respond with valid JSON only.')[0];
+    const text = textFromMessageContent(m.content);
     if (!text || /^\s*<tool_result\b/i.test(text)) continue;
-    const match = text.match(/\b(?:exact\s+)?keys\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
-    if (!match) continue;
-    return match[1]
-      .replace(/\s+(?:and|&)\s+/gi, ',')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
+    return text;
   }
-  return [];
+  return '';
 }
 
 export function isExplicitJsonRequested(messages) {
-  if (!Array.isArray(messages)) return false;
-  for (const m of messages) {
-    if (m?.role !== 'user') continue;
-    const text = textFromMessageContent(m.content);
-    if (!text || /^\s*<tool_result\b/i.test(text)) continue;
-    if (/\b(?:compact\s+)?JSON\b/i.test(text) && /\b(?:answer|respond|return|output|containing|with|only|valid)\b/i.test(text)) {
-      return true;
-    }
-    if (/\bJSON\s+(?:object|only|format)\b/i.test(text)) return true;
-    if (/\b(?:answer|respond|return|output)\s+only\s+(?:with\s+)?(?:valid\s+)?JSON\b/i.test(text)) return true;
+  const text = latestRealUserText(messages);
+  if (!text) return false;
+  if (/\b(?:compact\s+)?JSON\b/i.test(text) && /\b(?:answer|respond|return|output|containing|with|only|valid)\b/i.test(text)) {
+    return true;
   }
+  if (/\bJSON\s+(?:object|only|format)\b/i.test(text)) return true;
+  if (/\b(?:answer|respond|return|output)\s+only\s+(?:with\s+)?(?:valid\s+)?JSON\b/i.test(text)) return true;
   return false;
 }
 
@@ -1329,10 +1332,12 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         generatorOffset: chunks.generatorOffset,
       };
       serverUsage = chunks.usage || null;
-      {
+      if (emulateTools) {
         const parsed = parseToolCallsFromText(allText);
         allText = parsed.text;
         toolCalls = parsed.toolCalls;
+      } else {
+        allText = stripToolMarkupFromText(allText);
       }
       // Built-in Cascade tool calls (chunks.toolCalls — edit_file, view_file,
       // list_directory, run_command, etc.) are intentionally DROPPED. Their
@@ -1589,7 +1594,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       let checkedOutReuseEntry = reuseEntry;
       if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… stream model=${model}`);
 
-      // Always strip <tool_call>/<tool_result> blocks in Cascade mode.
+      // Strip <tool_call>/<tool_result> blocks in Cascade mode.
       // In emulation mode, parsed calls are emitted as OpenAI tool_calls.
       // In non-emulation mode, blocks are silently stripped (defense-in-depth
       // against Cascade's system prompt inducing tool markup).
@@ -1599,7 +1604,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       // e.g. a half-read `<tool_call>` tag — can't corrupt the next
       // account's stream. `let` bindings so the retry loop below can
       // reassign.
-      let toolParser = useCascade ? new ToolCallStreamParser() : null;
+      let toolParser = useCascade ? new ToolCallStreamParser({ parseBareJson: emulateTools, parseToolCode: emulateTools }) : null;
       const collectedToolCalls = [];
 
       // Streaming path sanitizers. Every text/thinking delta flows through a
@@ -1662,10 +1667,12 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                   emitContent(pathStreamText.feed(item.text));
                   continue;
                 }
-                const tc = sanitizeToolCall(repairToolCallArguments(item.toolCall, messages));
-                const idx = collectedToolCalls.length;
-                collectedToolCalls.push(tc);
-                emitToolCallDelta(tc, idx);
+                if (emulateTools) {
+                  const tc = sanitizeToolCall(repairToolCallArguments(item.toolCall, messages));
+                  const idx = collectedToolCalls.length;
+                  collectedToolCalls.push(tc);
+                  emitToolCallDelta(tc, idx);
+                }
               }
               safeText = '';
             } else {
@@ -1675,6 +1682,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               // the emulated call's input too (issue #38) — otherwise Claude
               // Code tries to Read the sandbox path and fails.
               for (const rawTc of parsed.toolCalls) {
+                if (!emulateTools) continue;
                 const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
@@ -1697,7 +1705,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           // retry. Skip on attempt 0 — already fresh. hadSuccess=true
           // means we already emitted content so no retry happens anyway.
           if (attempt > 0 && !hadSuccess) {
-            if (useCascade) toolParser = new ToolCallStreamParser();
+            if (useCascade) toolParser = new ToolCallStreamParser({ parseBareJson: emulateTools, parseToolCode: emulateTools });
             pathStreamText = new PathSanitizeStream();
             pathStreamThinking = new PathSanitizeStream();
           }

@@ -1893,7 +1893,7 @@ window._firebaseOAuth = async function(provider) {
             <label class="field-label" data-i18n="field.passwordProxy.label">密码</label>
             <div class="input-group">
               <input id="proxy-pass" class="input" type="password" data-i18n-placeholder="field.proxyPass.placeholder" placeholder="代理认证密码">
-              <button class="btn btn-outline btn-icon" onclick="const el=document.getElementById('proxy-pass');el.type=el.type==='password'?'text':'password'" title="显示/隐藏">
+              <button class="btn btn-outline btn-icon" onclick="const el=document.getElementById('proxy-pass');el.type=el.type==='password'?'text':'password'" data-i18n-title="action.showPassword" title="显示/隐藏密码">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
@@ -2723,7 +2723,9 @@ const App = {
   },
 
   getWindsurfProxyLabel(proxy) {
-    return proxy ? `${proxy.type}://${proxy.host}:${proxy.port}` : '全局';
+    if (!proxy) return I18n.t('proxy.global');
+    if (typeof proxy === 'string') return proxy;
+    return `${proxy.type}://${proxy.host}:${proxy.port}`;
   },
 
   pushLoginHistory(entry) {
@@ -2922,7 +2924,7 @@ const App = {
       this.pushLoginHistoryEntries(r.results.map(item => ({
           time: new Date().toISOString(),
           email: item.email,
-          proxy: this.getWindsurfProxyLabel(proxy),
+          proxy: this.getWindsurfProxyLabel(item.proxy),
           status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
           apiKey: item.success ? (item.apiKey_masked || (item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined)) : undefined,
         })));
@@ -4595,23 +4597,28 @@ const App = {
         communicationWithTools: I18n.t('experimental.communicationWithTools'),
         communicationNoTools: I18n.t('experimental.communicationNoTools')
       };
-      spHolder.innerHTML = Object.entries(sp.prompts || {}).map(([key, text]) => `
+      spHolder.innerHTML = Object.entries(sp.prompts || {}).map(([key, text]) => {
+        const safeKey = this.esc(key);
+        const keyArg = this.escJsAttr(key);
+        const promptId = this.systemPromptDomId(key);
+        return `
         <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--surface)">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div><code style="color:var(--accent);font-weight:600">${key}</code> <span class="text-sm text-muted">${labels[key]||key}</span></div>
+            <div><code style="color:var(--accent);font-weight:600">${safeKey}</code> <span class="text-sm text-muted">${this.esc(labels[key] || key)}</span></div>
             <div class="btn-group">
-              <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${key}')">${I18n.t('experimental.default')}</button>
-              <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${key}')">${I18n.t('experimental.save')}</button>
+              <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${keyArg}')">${I18n.t('experimental.default')}</button>
+              <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${keyArg}')">${I18n.t('experimental.save')}</button>
             </div>
           </div>
-          <textarea id="sp-${key}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
+          <textarea id="${promptId}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
   },
 
   async saveSystemPrompt(key) {
-    const ta = document.getElementById(`sp-${key}`);
+    const ta = document.getElementById(this.systemPromptDomId(key));
     if (!ta) return;
     await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
     this.toast(`${key} ${I18n.t('toast.saved')}`, 'success');
@@ -4620,7 +4627,7 @@ const App = {
   async resetSystemPrompt(key) {
     const ok = await this.confirm(I18n.t('action.reset'), `${key} ${I18n.t('confirm.restoreDefaultDesc') || 'restore to default?'}`, { okText: I18n.t('action.reset') });
     if (!ok) return;
-    await this.api('DELETE', `/system-prompts/${key}`);
+    await this.api('DELETE', `/system-prompts/${encodeURIComponent(key)}`);
     this.toast(`${key} ${I18n.t('experimental.restored') || 'reset'}`, 'success');
     this.loadExperimental();
   },
@@ -4849,6 +4856,9 @@ const App = {
     }).join('')}</div>`;
   },
   esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
+  systemPromptDomId(key) {
+    return `sp-${encodeURIComponent(String(key == null ? '' : key)).replace(/%/g, '_')}`;
+  },
   // For values interpolated into an inline `onclick="App.f('${...}')"`
   // string: the HTML attribute parser will decode &#39; back to ', which
   // then breaks out of the JS string literal. Do JS-level string escaping

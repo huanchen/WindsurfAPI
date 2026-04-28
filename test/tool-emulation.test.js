@@ -4,6 +4,7 @@ import { repairToolCallArguments } from '../src/handlers/chat.js';
 import {
   ToolCallStreamParser,
   parseToolCallsFromText,
+  stripToolMarkupFromText,
   buildToolPreamble,
   buildToolPreambleForProto,
   buildCompactToolPreambleForProto,
@@ -33,6 +34,15 @@ describe('ToolCallStreamParser', () => {
     const allCalls = [...r.toolCalls, ...flush.toolCalls];
     assert.equal(allCalls.length, 1);
     assert.equal(allCalls[0].name, 'Write');
+  });
+
+  it('can leave bare JSON untouched when stripping non-emulated Cascade markup', () => {
+    const json = '{"name":"not_a_tool","arguments":{"message":"plain response"}}';
+    assert.equal(stripToolMarkupFromText(json), json);
+    assert.equal(
+      stripToolMarkupFromText(`A<tool_call>{"name":"Read","arguments":{"path":"x"}}</tool_call>B`),
+      'AB',
+    );
   });
 
   it('handles tool call split across chunks', () => {
