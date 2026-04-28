@@ -39,7 +39,7 @@ test('stream queue-timeout no longer breaks with empty lastErr (#77)', () => {
   );
   assert.match(
     slice,
-    /isAllTemporarilyUnavailable\(modelKey\)|isAllRateLimited\(modelKey\)/,
+    /isAllTemporarilyUnavailable\((?:modelKey|routingModelKey)\)|isAllRateLimited\((?:modelKey|routingModelKey)\)/,
     'stream queue-timeout branch must classify the reason (rate-limited / temporarily unavailable) so the operator knows what kept the queue empty',
   );
 });
@@ -59,7 +59,7 @@ test('non-stream queue-timeout no longer breaks with empty lastErr (#77)', () =>
   );
   assert.match(
     slice,
-    /isAllTemporarilyUnavailable\(modelKey\)|isAllRateLimited\(modelKey\)/,
+    /isAllTemporarilyUnavailable\((?:modelKey|routingModelKey)\)|isAllRateLimited\((?:modelKey|routingModelKey)\)/,
     'non-stream queue-timeout branch must classify the reason for empty pool',
   );
 });

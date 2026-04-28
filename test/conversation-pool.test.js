@@ -66,6 +66,25 @@ describe('fingerprintBefore', () => {
       fingerprintBefore(msgs, 'claude-4.5-sonnet')
     );
   });
+
+  it('does not learn user XML tags into the global fingerprint stripper', () => {
+    poolClear();
+    const caller = 'api:shared';
+    const model = 'claude-opus-4.7';
+    // Warmup: attacker fp stored under fp(strip(<evil>attacker</evil>)).
+    const stored = fingerprintAfter(
+      [{ role: 'user', content: '<evil>attacker</evil>' }],
+      model,
+      caller
+    );
+    // After the warmup, victim's continuation must still produce a different fp.
+    const victim = fingerprintBefore([
+      { role: 'user', content: '<evil>victim</evil>' },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'continue' },
+    ], model, caller);
+    assert.notEqual(stored, victim);
+  });
 });
 
 describe('fingerprintAfter', () => {

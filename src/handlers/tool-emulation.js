@@ -538,6 +538,7 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
  * next delta.
  */
 const TOOL_PARSE_MODE = process.env.TOOL_PARSE_MODE || 'auto';
+const TOOL_XML_BODY_MAX = 65_536;
 
 export class ToolCallStreamParser {
   constructor(options = {}) {
@@ -645,6 +646,12 @@ export class ToolCallStreamParser {
     while (true) {
       // ── Inside a <tool_result …>…</tool_result> block — discard body ──
       if (this.inToolResult) {
+        if (this.buffer.length > TOOL_XML_BODY_MAX) {
+          log.warn(`ToolCallStreamParser: <tool_result> body exceeds 65KB (${this.buffer.length} bytes), dropping`);
+          this.buffer = '';
+          this.inToolResult = false;
+          continue;
+        }
         const closeIdx = this.buffer.indexOf(TR_CLOSE);
         if (closeIdx === -1) break;
         this.buffer = this.buffer.slice(closeIdx + TR_CLOSE.length);
@@ -654,6 +661,13 @@ export class ToolCallStreamParser {
 
       // ── Inside a <tool_call>…</tool_call> block — parse JSON body ──
       if (this.inToolCall) {
+        if (this.buffer.length > TOOL_XML_BODY_MAX) {
+          log.warn(`ToolCallStreamParser: <tool_call> body exceeds 65KB (${this.buffer.length} bytes), emitting as text`);
+          pushText(`${TC_OPEN}${this.buffer}`);
+          this.buffer = '';
+          this.inToolCall = false;
+          continue;
+        }
         const closeIdx = this.buffer.indexOf(TC_CLOSE);
         if (closeIdx === -1) break;
         const body = this.buffer.slice(0, closeIdx).trim();

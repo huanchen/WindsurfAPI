@@ -77,18 +77,14 @@ let META_TAG_RE = buildMetaTagRe();
 function stripMetaTags(s) {
   if (typeof s !== 'string' || !s) return s;
   const stripped = s.replace(META_TAG_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  // Debug: log any remaining XML tags NOT in META_TAG_NAMES so we can expand the list
+  // Unknown tags are caller content. Never learn them into the global
+  // stripping set or fingerprints stop being a pure function of the request.
   const remaining = stripped.match(/<([a-z][-a-z_]*)[^>]*>[\s\S]*?<\/\1>/g);
   if (remaining?.length) {
     const tagNames = remaining.map(m => m.match(/^<([a-z][-a-z_]*)/)?.[1]).filter(Boolean);
     const unknown = tagNames.filter(t => !META_TAG_NAMES.has(t));
     if (unknown.length) {
       console.error(`[META_TAG_AUDIT] Unknown XML tags in user message: ${[...new Set(unknown)].join(', ')}`);
-      let added = false;
-      for (const t of unknown) {
-        if (!META_TAG_NAMES.has(t)) { META_TAG_NAMES.add(t); added = true; }
-      }
-      if (added) META_TAG_RE = buildMetaTagRe();
     }
   }
   return stripped;

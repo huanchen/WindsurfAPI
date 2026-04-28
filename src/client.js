@@ -581,6 +581,11 @@ export class WindsurfClient {
           );
           cascadeId = parseStartCascadeResponse(startResp);
           if (!cascadeId) throw new Error('StartCascade returned empty cascade_id after re-warm');
+          // This is now a fresh cascade carrying full rebuilt history, not a
+          // continuation of the expired trajectory. Poll from the beginning.
+          reuseEntry = null;
+          stepOffset = 0;
+          generatorOffset = 0;
         }
       }
 

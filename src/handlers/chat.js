@@ -868,6 +868,7 @@ export async function handleChatCompletions(body, context = {}) {
   if (effectiveModelKey !== modelKey) {
     log.info(`Chat[${reqId}]: routed ${modelKey} -> ${effectiveModelKey} (wantThinking=${wantThinking})`);
   }
+  const routingModelKey = effectiveModelKey;
   const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
   // Reject unknown models. Without this, chat.js used to fall through to
   // legacy rawGetChatMessage with modelEnum=0 and modelUid=null, which
@@ -975,7 +976,7 @@ export async function handleChatCompletions(body, context = {}) {
       log.info(`Chat[${reqId}]: env NOT lifted (extractor returned empty)${probe ? '; nearest env-shaped substring in messages: ' + probe : '; no env-shaped substring found in any message'}`);
     }
   }
-  const disableUserToolFallback = emulateTools && isToolSensitiveOpusModel(modelKey) && hasMultimodalContent(messages);
+  const disableUserToolFallback = emulateTools && isToolSensitiveOpusModel(routingModelKey) && hasMultimodalContent(messages);
   if (disableUserToolFallback) {
     log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.x multimodal turn`);
   }
@@ -1014,7 +1015,7 @@ export async function handleChatCompletions(body, context = {}) {
   }
 
   // Global model access control (allowlist / blocklist from dashboard)
-  const access = isModelAllowed(modelKey);
+  const access = isModelAllowed(routingModelKey);
   if (!access.allowed) {
     return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
   }
@@ -1025,7 +1026,7 @@ export async function handleChatCompletions(body, context = {}) {
   // entitlement and blocklist errors as a clean 403 rather than a 30s
   // queue timeout → pool_exhausted.
   const anyEligible = getAccountList().some(a =>
-    a.status === 'active' && (a.availableModels || []).includes(modelKey)
+    a.status === 'active' && (a.availableModels || []).includes(routingModelKey)
   );
   if (!anyEligible) {
     return {
@@ -1044,7 +1045,7 @@ export async function handleChatCompletions(body, context = {}) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey, {
+    return streamResponse(chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey, {
       checkMessageRateLimit: checkMessageRateLimitFn,
       waitForAccount: waitForAccountFn,
       cachePolicy,
@@ -1075,10 +1076,10 @@ export async function handleChatCompletions(body, context = {}) {
   // instead of replaying the whole history.
   //
   // Conversation reuse lets Cascade keep server-side context across turns.
-  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })
-    && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey }));
-  const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey });
-  const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey, callerKey) : null;
+  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey: routingModelKey })
+    && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey: routingModelKey }));
+  const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey: routingModelKey });
+  const fpBefore = reuseEnabled ? fingerprintBefore(messages, routingModelKey, callerKey) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
   let checkedOutReuseEntry = reuseEntry;
   if (reuseEntry) log.info(`Chat[${reqId}]: reuse HIT cascade=${reuseEntry.cascadeId.slice(0, 8)} model=${displayModel}`);
@@ -1101,19 +1102,19 @@ export async function handleChatCompletions(body, context = {}) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
-      acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
+      acct = acquireAccountByKey(reuseEntry.apiKey, routingModelKey);
       if (!acct) {
         // Owning account busy — wait up to 5s for it instead of immediately
         // giving up. Dropping reuse means falling back to text-blob history
         // which loses context on most models.
         for (let w = 0; w < 10 && !acct; w++) {
           await new Promise(r => setTimeout(r, 500));
-          acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
+          acct = acquireAccountByKey(reuseEntry.apiKey, routingModelKey);
         }
         if (!acct) {
           log.info(`Chat[${reqId}]: reuse MISS — owning account not available after 5s wait`);
           if (strictReuse && checkedOutReuseEntry && fpBefore) {
-            const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, modelKey);
+            const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, routingModelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
             poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: strict reuse preserved cascade; owner unavailable reason=${availability.reason}`);
@@ -1134,15 +1135,15 @@ export async function handleChatCompletions(body, context = {}) {
       }
     }
     if (!acct) {
-      acct = await waitForAccountFn(tried, null, QUEUE_MAX_WAIT_MS, modelKey);
+      acct = await waitForAccountFn(tried, null, QUEUE_MAX_WAIT_MS, routingModelKey);
       if (!acct) {
         // Same diagnostic-error fix as the stream path — surface real reason
         // for the queue timeout (rate limit / no entitlement / upstream stall)
         // so the client gets a useful message instead of falling through to
         // a generic pool_exhausted error from the bottom of this function.
         if (!lastErr) {
-          const tempUnavail = isAllTemporarilyUnavailable(modelKey);
-          const rateLimited = isAllRateLimited(modelKey);
+          const tempUnavail = isAllTemporarilyUnavailable(routingModelKey);
+          const rateLimited = isAllRateLimited(routingModelKey);
           const reason = tempUnavail.allUnavailable
             ? `所有可用账号暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
             : rateLimited.allLimited
@@ -1169,10 +1170,10 @@ export async function handleChatCompletions(body, context = {}) {
           log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
           refundReservation(acct.apiKey, acct.reservationTimestamp);
           if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
-            markRateLimited(acct.apiKey, rl.retryAfterMs, modelKey);
+            markRateLimited(acct.apiKey, rl.retryAfterMs, routingModelKey);
           }
           if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
-            const availability = getAccountAvailability(acct.apiKey, modelKey);
+            const availability = getAccountAvailability(acct.apiKey, routingModelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
             poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: strict reuse preserved cascade after preflight rate limit`);
@@ -1213,7 +1214,7 @@ export async function handleChatCompletions(body, context = {}) {
     log.info(`Chat[${reqId}]: model=${displayModel} flow=${useCascade ? 'cascade' : 'legacy'} attempt=${attempt + 1} account=${acct.email} ls=${ls.port} turns=${(messages||[]).length} chars=${_msgChars}${reuseEntry ? ' reuse=1' : ''}${emulateTools ? ' tools=emu' : ''}`);
     const client = new WindsurfClient(acct.apiKey, ls.port, ls.csrfToken);
     const result = await nonStreamResponse(
-      client, chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid,
+      client, chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy } : null,
       emulateTools, toolPreamble, wantJson, cachePolicy,
@@ -1225,7 +1226,7 @@ export async function handleChatCompletions(body, context = {}) {
     // Rate limit: this account is done for this model, try the next one
     if (errType === 'rate_limit_exceeded') {
       if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
-        const availability = getAccountAvailability(acct.apiKey, modelKey);
+        const availability = getAccountAvailability(acct.apiKey, routingModelKey);
         const retryAfterMs = strictReuseRetryMs(availability);
         poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
         log.info(`Chat[${reqId}]: strict reuse preserved cascade after rate limit`);
@@ -1278,7 +1279,7 @@ export async function handleChatCompletions(body, context = {}) {
     };
   }
   // If all accounts exhausted, check if it's because they're all rate-limited
-  const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
+  const temporaryUnavailable = isAllTemporarilyUnavailable(routingModelKey);
   if (temporaryUnavailable.allUnavailable) {
     if (checkedOutReuseEntry && fpBefore) {
       poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
@@ -1298,7 +1299,7 @@ export async function handleChatCompletions(body, context = {}) {
     };
   }
   if (!lastErr || lastErr.status === 429) {
-    const rl = isAllRateLimited(modelKey);
+    const rl = isAllRateLimited(routingModelKey);
     if (rl.allLimited) {
       if (checkedOutReuseEntry && fpBefore) {
         poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));

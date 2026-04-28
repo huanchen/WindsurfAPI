@@ -97,6 +97,22 @@ describe('ToolCallStreamParser', () => {
     const allCalls = [...r.toolCalls, ...flush.toolCalls];
     assert.equal(allCalls.length, 2);
   });
+
+  it('caps unclosed <tool_call> body at 65KB to avoid OOM', () => {
+    const parser = new ToolCallStreamParser();
+    parser.feed('<tool_call>{"name":"x","arguments":{"data":"');
+    parser.feed('A'.repeat(70_000));
+    assert.equal(parser.inToolCall, false);
+    assert.ok(parser.buffer.length < 1024);
+  });
+
+  it('caps unclosed <tool_result> body at 65KB', () => {
+    const parser = new ToolCallStreamParser();
+    parser.feed('<tool_result tool_call_id="abc">');
+    parser.feed('B'.repeat(70_000));
+    assert.equal(parser.inToolResult, false);
+    assert.equal(parser.buffer.length, 0);
+  });
 });
 
 describe('parseToolCallsFromText', () => {
