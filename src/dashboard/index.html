@@ -1651,6 +1651,25 @@ window._firebaseOAuth = async function(provider) {
       </div>
     </div>
 
+    <div class="section hidden" id="wl-result"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.loginHistory.title">登录历史</div>
+          <div class="section-desc" data-i18n="section.loginHistory.desc">本地记录最近 50 条登录操作</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table id="wl-history-table">
+            <thead><tr><th data-i18n="table.header.time">时间</th><th data-i18n="table.header.email">邮箱</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.proxy">代理</th><th data-i18n="table.header.action">操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <div class="section" id="wl-proxy-section">
       <div class="section-header">
         <div>
@@ -1691,25 +1710,6 @@ window._firebaseOAuth = async function(provider) {
             <span data-i18n="proxy.test.button">测试代理</span>
           </button>
           <span id="wl-proxy-test-result" class="text-sm text-muted"></span>
-        </div>
-      </div>
-    </div>
-
-    <div class="section hidden" id="wl-result"></div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title" data-i18n="section.loginHistory.title">登录历史</div>
-          <div class="section-desc" data-i18n="section.loginHistory.desc">本地记录最近 50 条登录操作</div>
-        </div>
-      </div>
-      <div class="section-body tight">
-        <div class="table-wrap">
-          <table id="wl-history-table">
-            <thead><tr><th data-i18n="table.header.time">时间</th><th data-i18n="table.header.email">邮箱</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.proxy">代理</th><th data-i18n="table.header.action">操作</th></tr></thead>
-            <tbody></tbody>
-          </table>
         </div>
       </div>
     </div>
@@ -2024,8 +2024,9 @@ window._firebaseOAuth = async function(provider) {
             <div class="chart-subtitle" data-i18n="section.modelPie.desc">前 8 个模型的请求量占比</div>
           </div>
         </div>
-        <div class="chart-pie-body">
+        <div class="chart-pie-body" style="position:relative">
           <canvas id="model-pie-canvas"></canvas>
+          <div class="chart-tooltip" id="model-pie-tooltip"></div>
           <div class="pie-legend" id="model-pie-legend"></div>
         </div>
       </div>
@@ -4432,6 +4433,50 @@ const App = {
     canvas.addEventListener('mouseleave', () => { tipEl.classList.remove('show'); });
   },
 
+  _bindPieHover() {
+    const canvas = document.getElementById('model-pie-canvas');
+    const tipEl  = document.getElementById('model-pie-tooltip');
+    if (!canvas || !tipEl || canvas._pieHoverBound) return;
+    canvas._pieHoverBound = true;
+    canvas.addEventListener('mousemove', (ev) => {
+      const hm = this._pieHitMap;
+      if (!hm) { tipEl.classList.remove('show'); return; }
+      const rect = canvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const dx = x - hm.cx, dy = y - hm.cy;
+      const r = Math.hypot(dx, dy);
+      if (r < hm.rInner || r > hm.rOuter) { tipEl.classList.remove('show'); return; }
+      // Pie starts at -π/2 going clockwise. Normalize cursor angle into the
+      // same 0..2π space relative to the start angle so segment boundaries
+      // align with the drawn arcs.
+      let a = Math.atan2(dy, dx) + Math.PI / 2;
+      if (a < 0) a += Math.PI * 2;
+      const startAngle0 = -Math.PI / 2;
+      const seg = hm.segments.find(s => {
+        const sNorm = s.startAngle - startAngle0;
+        const eNorm = s.endAngle - startAngle0;
+        return a >= sNorm && a < eNorm;
+      });
+      if (!seg) { tipEl.classList.remove('show'); return; }
+      const pct = (seg.count / hm.total * 100).toFixed(1);
+      const successRate = seg.count > 0 ? (seg.success / seg.count * 100).toFixed(1) : '—';
+      tipEl.innerHTML = `
+        <div class="tt-time">${this.esc(seg.name)}</div>
+        <div class="tt-row"><span class="tt-dot" style="background:${seg.color}"></span><span class="tt-label">${I18n.t('section.requestChart.tooltipRequests')}</span><span class="tt-value">${seg.count} (${pct}%)</span></div>
+        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipSuccess')}</span><span class="tt-value">${seg.success}</span></div>
+        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipErrors')}</span><span class="tt-value">${seg.errors}</span></div>
+        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipRate')}</span><span class="tt-value">${successRate}%</span></div>
+      `;
+      tipEl.classList.add('show');
+      // Tooltip lives inside chart-pie-body (position:relative). Position it
+      // relative to that parent using cursor coords already in canvas space.
+      tipEl.style.left = x + 'px';
+      tipEl.style.top = Math.max(0, y - 12) + 'px';
+    });
+    canvas.addEventListener('mouseleave', () => { tipEl.classList.remove('show'); });
+  },
+
   _roundRect(ctx, x, y, w, h, r) {
     if (h <= 0 || w <= 0) return;
     const rr = Math.min(r, w / 2, h / 2);
@@ -4516,13 +4561,15 @@ const App = {
     if (!canvas) return;
 
     const entries = Object.entries(d.modelCounts || {})
-      .map(([name, s]) => ({ name, count: s.requests || 0 }))
+      .map(([name, s]) => ({ name, count: s.requests || 0, success: s.success || 0, errors: s.errors || 0 }))
       .filter(e => e.count > 0)
       .sort((a, b) => b.count - a.count);
 
     const top = entries.slice(0, 8);
-    const others = entries.slice(8).reduce((a, b) => a + b.count, 0);
-    if (others > 0) top.push({ name: 'others', count: others });
+    const others = entries.slice(8).reduce((acc, e) => ({
+      count: acc.count + e.count, success: acc.success + e.success, errors: acc.errors + e.errors,
+    }), { count: 0, success: 0, errors: 0 });
+    if (others.count > 0) top.push({ name: 'others', count: others.count, success: others.success, errors: others.errors });
 
     const total = top.reduce((a, b) => a + b.count, 0);
 
@@ -4536,6 +4583,7 @@ const App = {
       ctx.textBaseline = 'middle';
       ctx.fillText(I18n.t('table.empty.noData'), W / 2, H / 2);
       if (legend) legend.innerHTML = '';
+      this._pieHitMap = null;
       return;
     }
 
@@ -4543,6 +4591,7 @@ const App = {
     const rOuter = Math.min(W, H) / 2 - 6;
     const rInner = rOuter * 0.58;
 
+    const segments = [];
     let angle = -Math.PI / 2;
     top.forEach((seg, i) => {
       const frac = seg.count / total;
@@ -4554,8 +4603,12 @@ const App = {
       ctx.closePath();
       ctx.fillStyle = this._pieColors[i % this._pieColors.length];
       ctx.fill();
+      segments.push({ ...seg, color: this._pieColors[i % this._pieColors.length], startAngle: angle, endAngle: a2 });
       angle = a2;
     });
+
+    this._pieHitMap = { cx, cy, rOuter, rInner, total, segments, W, H };
+    this._bindPieHover();
 
     // Center label
     ctx.fillStyle = 'var(--text)';
