@@ -32,6 +32,7 @@ LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
 LS_PORT=42100
 DASHBOARD_PASSWORD=
+ALLOW_PRIVATE_PROXY_HOSTS=
 ENVEOF
   echo "       Edit .env to set your API_KEY and DASHBOARD_PASSWORD"
 else

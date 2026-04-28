@@ -83,6 +83,9 @@ export const config = {
 
   // Dashboard
   dashboardPassword: process.env.DASHBOARD_PASSWORD || '',
+
+  // Proxy testing
+  allowPrivateProxyHosts: process.env.ALLOW_PRIVATE_PROXY_HOSTS === '1',
 };
 
 const levels = { debug: 0, info: 1, warn: 2, error: 3 };

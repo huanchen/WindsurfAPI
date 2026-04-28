@@ -25,6 +25,7 @@ import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './wi
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
+import { validateHostFormat } from '../net-safety.js';
 
 export function buildBatchProxyBinding(result, proxy) {
   const accountId = result?.account?.id || null;
@@ -746,7 +747,11 @@ async function gitStatus() {
 }
 
 async function testProxy({ host, port, username, password, type }) {
-  await assertPublicUrlHost(host);
+  if (config.allowPrivateProxyHosts) {
+    await validateHostFormat(host);
+  } else {
+    await assertPublicUrlHost(host);
+  }
   const { isSocks, createSocksTunnel } = await import('../socks.js');
   const tls = await import('node:tls');
   const targetHost = 'api.ipify.org';
