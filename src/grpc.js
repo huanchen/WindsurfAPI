@@ -2,15 +2,15 @@
  * HTTP/2 client for the local Windsurf language server binary.
  * Supports both gRPC and Connect-RPC protocols.
  *
- * GRPC_PROTOCOL=connect (default) — matches real Windsurf client fingerprint.
- * GRPC_PROTOCOL=grpc — legacy mode, original gRPC framing.
+ * Connect by default; set GRPC_PROTOCOL=grpc to use legacy gRPC for debugging.
  */
 
 import http2 from 'http2';
 import { log } from './config.js';
 import { wrapRequest, StreamingFrameParser } from './connect.js';
 
-const USE_CONNECT = process.env.GRPC_PROTOCOL === 'connect';
+const USE_CONNECT = process.env.GRPC_PROTOCOL !== 'grpc';
+export const _USE_CONNECT_FOR_TEST = USE_CONNECT;
 
 // ─── HTTP/2 session pool ───────────────────────────────────
 //
