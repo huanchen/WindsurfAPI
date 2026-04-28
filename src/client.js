@@ -398,6 +398,11 @@ export class WindsurfClient {
     // (LS restarted, TTL expired, etc.). Re-run warmupCascade with a fresh
     // sessionId and retry the handshake once.
     const isPanelMissing = (e) => /panel state not found|not_found.*panel/i.test(e?.message || '');
+    // v2.0.25 HIGH-2: a cascade we tried to resume is gone upstream (TTL
+    // expired, server flushed, replay window passed). Same recovery as
+    // panel-missing — discard the reuse entry and fresh-start with full
+    // history replay.
+    const isExpiredCascade = (e) => /not_found.*(cascade|trajectory)|(?:cascade|trajectory).*not[ _-]?found|expired.*cascade|unknown.*cascade/i.test(e?.message || '');
 
     try {
       // Step 1: Start cascade — with retry on panel-state-not-found
@@ -493,6 +498,12 @@ export class WindsurfClient {
 
       const isResume = !!reuseEntry;
 
+      // v2.0.25 LOW-2: track which turns from the caller history actually
+      // landed in the upstream prompt, so the conversation pool entry can
+      // expose how much of the trajectory it really represents. Resume
+      // path doesn't replay history (cascade still has it), so coverage =
+      // full input; fresh path may truncate large histories.
+      let historyCoverage = { droppedTurnCount: 0, firstIncludedTurnIndex: 0, totalTurns: convo.length };
       if (isResume || convo.length <= 1) {
         const last = convo[convo.length - 1];
         const extracted = await extractImages(last?.content ?? '');
@@ -503,17 +514,25 @@ export class WindsurfClient {
         const maxHistoryBytes = cascadeHistoryBudget(modelUid);
         const lines = [];
         let historyBytes = sysText ? sysText.length : 0;
+        let firstIncluded = 0;
         for (let i = convo.length - 2; i >= 0; i--) {
           const m = convo[i];
           const tag = m.role === 'user' ? 'human' : 'assistant';
           const line = `<${tag}>\n${escapeHistoryTag(contentToString(m.content), tag)}\n</${tag}>`;
           if (historyBytes + line.length > maxHistoryBytes && lines.length > 0) {
             log.info(`Cascade: trimmed history at turn ${i}/${convo.length} (${Math.round(historyBytes/1024)}KB kept, ${convo.length - 2 - i} turns dropped)`);
+            firstIncluded = i + 1;
             break;
           }
           lines.unshift(line);
           historyBytes += line.length;
+          firstIncluded = i;
         }
+        historyCoverage = {
+          droppedTurnCount: firstIncluded,
+          firstIncludedTurnIndex: firstIncluded,
+          totalTurns: convo.length,
+        };
         const latest = convo[convo.length - 1];
         const extracted = await extractImages(latest?.content ?? '');
         text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${extracted.text}\n</human>`;
@@ -557,17 +576,29 @@ export class WindsurfClient {
       };
       let panelRetry = 0;
       let historyRebuilt = false;
+      let cascadeExpiredOnce = false;
       while (true) {
         try {
           await sendMessage();
           break;
         } catch (e) {
-          if (!isPanelMissing(e)) throw e;
+          const expired = isExpiredCascade(e);
+          if (!isPanelMissing(e) && !expired) throw e;
           panelRetry++;
           if (panelRetry > MAX_PANEL_RETRIES) {
-            throw new Error(`Panel state lost ${panelRetry - 1} times after re-warm — likely an LS-level issue with very large payloads (${text.length} chars). Try reducing system prompt size or tool count.`);
+            const detail = cascadeExpiredOnce ? 'cascade expired and could not be re-established' : `Panel state lost ${panelRetry - 1} times after re-warm`;
+            const err = new Error(`${detail} — likely an LS-level issue with very large payloads (${text.length} chars). Try reducing system prompt size or tool count.`);
+            // Tell the handler the entry we held is dead so it doesn't
+            // restore it to the pool on the way out (HIGH-2).
+            if (cascadeExpiredOnce) err.reuseEntryInvalid = true;
+            throw err;
           }
-          log.warn(`Panel state missing on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), payload=${text.length} chars, re-warming port=${this.port}`);
+          if (expired) {
+            cascadeExpiredOnce = true;
+            log.warn(`Cascade expired/not-found on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), discarding reuse entry, replaying full history on port=${this.port}: ${e.message}`);
+          } else {
+            log.warn(`Panel state missing on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), payload=${text.length} chars, re-warming port=${this.port}`);
+          }
           // Cascade expired — fall back to fresh with FULL history on first retry
           if (!historyRebuilt) {
             await rebuildFullHistoryText();
@@ -595,6 +626,9 @@ export class WindsurfClient {
           generatorOffset = 0;
         }
       }
+      // Surface the recovery to the caller so chat.js can skip restoring the
+      // dead reuse entry to the pool on later success/failure paths.
+      if (cascadeExpiredOnce) this._lastReuseInvalidated = true;
 
       // Step 3: Poll for response.
       // Track per-step text cursors instead of a single global `lastYielded`.
@@ -939,6 +973,19 @@ export class WindsurfClient {
         : null;
       chunks.toolCalls = toolCalls;
       chunks.usage = serverUsage;
+      // v2.0.25 HIGH-2: surface "the original reuse entry was dead and we
+      // recovered with a fresh cascade" so the caller skips checking the dead
+      // entry back into the pool. The new cascadeId we attached above is the
+      // fresh one and is safe to checkin under fpAfter.
+      chunks.reuseEntryInvalidated = !!this._lastReuseInvalidated;
+      this._lastReuseInvalidated = false;
+      // v2.0.25 LOW-1: stamp the LS generation onto the cascade meta so the
+      // pool entry can be invalidated cleanly if this LS restarts and a
+      // different LS later lands on the same port.
+      chunks.lsGeneration = lsEntry?.generation || null;
+      // v2.0.25 LOW-2: surface history coverage so the pool entry can
+      // record whether truncation happened on the fresh-cascade path.
+      chunks.historyCoverage = historyCoverage;
       if (serverUsage) {
         log.info(`Cascade usage: in=${serverUsage.inputTokens} out=${serverUsage.outputTokens} cache_r=${serverUsage.cacheReadTokens} cache_w=${serverUsage.cacheWriteTokens}`);
       }

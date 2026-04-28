@@ -634,7 +634,7 @@ export async function handleMessages(body, context = {}) {
     : context;
 
   if (!wantStream) {
-    const result = await chatHandler({ ...openaiBody, stream: false }, effectiveContext);
+    const result = await chatHandler({ ...openaiBody, stream: false, __route: 'messages' }, effectiveContext);
     if (result.status !== 200) {
       return {
         status: result.status,
@@ -653,7 +653,7 @@ export async function handleMessages(body, context = {}) {
   // Streaming path — ask handleChatCompletions for its streaming handler and
   // point its writes at our translator shim. This lets the upstream Cascade
   // poll loop drive the downstream SSE in real time — no buffer-then-replay.
-  const streamResult = await chatHandler({ ...openaiBody, stream: true }, effectiveContext);
+  const streamResult = await chatHandler({ ...openaiBody, stream: true, __route: 'messages' }, effectiveContext);
 
   if (!streamResult.stream) {
     // The OpenAI path returned a non-stream error (e.g. 403 model_not_entitled)

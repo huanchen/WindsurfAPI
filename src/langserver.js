@@ -13,6 +13,7 @@ import { mkdirSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
+import { randomUUID } from 'crypto';
 import { resolve } from 'path';
 import { log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
@@ -285,7 +286,10 @@ export async function ensureLs(proxy = null) {
         // replacement LS opens a fresh one instead of writing into a
         // dead socket (grpc.js caches one session per port).
         closeSessionForPort(gone.port);
-        import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port })).catch(() => {});
+        // v2.0.25 LOW-1: pass the dead LS's generation so a new LS that
+        // already came up on the same port keeps its entries.
+        const goneGen = gone.generation;
+        import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port, lsGeneration: goneGen })).catch(() => {});
       }
     });
     proc.on('error', (err) => {
@@ -309,6 +313,10 @@ export async function ensureLs(proxy = null) {
     const entry = {
       process: proc, port, csrfToken: DEFAULT_CSRF,
       proxy, startedAt: Date.now(), ready: false,
+      // v2.0.25 LOW-1: per-spawn UUID so the conversation pool can tell a
+      // new LS that landed on the same port apart from the dead one. Used
+      // by checkout(expected={lsGeneration}) and invalidateFor({lsGeneration}).
+      generation: randomUUID(),
       // One-shot Cascade workspace init promise. cascadeChat() awaits this so
       // the heavy InitializePanelState / AddTrackedWorkspace / UpdateWorkspaceTrust
       // trio only runs once per LS lifetime instead of once per request.
@@ -347,6 +355,17 @@ export async function restartLsForProxy(proxy) {
   const entry = _pool.get(key);
   if (entry?.process) {
     try { entry.process.kill('SIGTERM'); } catch {}
+  }
+  if (entry?.port) {
+    // v2.0.25 LOW-1: same-port LS replacement opens a window where stale
+    // pool entries from the old LS could resume against the new LS's
+    // session. Close the cached HTTP/2 session and invalidate this LS's
+    // generation in the conversation pool synchronously, then spawn fresh.
+    closeSessionForPort(entry.port);
+    try {
+      const m = await import('./conversation-pool.js');
+      m.invalidateFor({ lsPort: entry.port, lsGeneration: entry.generation });
+    } catch {}
   }
   _pool.delete(key);
   return ensureLs(proxy);
@@ -395,11 +414,24 @@ export async function startLanguageServer(opts = {}) {
 }
 
 export function stopLanguageServer() {
+  // v2.0.25 LOW-1: tear down ALL conversation pool entries pinned to LSes
+  // we're about to kill, so the dashboard restart path doesn't leak dead
+  // cascade ids into the next LS's session window.
+  const portsToClose = [];
   for (const [key, entry] of _pool) {
     try { entry.process?.kill('SIGTERM'); } catch {}
+    if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
     log.info(`LS instance ${key} stopped`);
   }
   _pool.clear();
+  if (portsToClose.length) {
+    import('./conversation-pool.js').then(m => {
+      for (const p of portsToClose) {
+        closeSessionForPort(p.port);
+        m.invalidateFor({ lsPort: p.port, lsGeneration: p.generation });
+      }
+    }).catch(() => {});
+  }
 }
 
 export function isLanguageServerRunning() {

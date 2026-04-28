@@ -6,12 +6,14 @@
  * Windsurf backend keep its own per-cascade context cached — we avoid
  * resending the full history on each turn and the server responds faster.
  *
- * The key is a "fingerprint" of the stable caller-visible trajectory up to
- * (but not including) the newest user/tool result turn. A client sending
- * [u1, a1, u2] looks up fp([u1]); a hit means we already drove the cascade to
- * exactly that state. We then `SendUserCascadeMessage(u2)` on the stored
- * cascade_id and, on success, re-store the entry under fp([u1, u2]) for the
- * next turn.
+ * The key is a "state digest" of the caller-visible trajectory up to (but
+ * not including) the newest user/tool result turn. v2.0.25 upgraded the key
+ * from a relaxed "user text only" projection to a server-state semantic key
+ * that includes assistant text + tool_calls digest, normalized system,
+ * stable media digests, and (when tool-emulating) the tool schema digest.
+ * This trades some hit rate for correctness: when the client's prior
+ * assistant / system / tool context drifts, we miss instead of silently
+ * resuming a stale upstream cascade.
  *
  * Safety rails:
  *   - Entries are pinned to a specific (apiKey, lsPort) pair. We must reuse
@@ -31,12 +33,8 @@ function positiveIntEnv(name, fallback) {
 
 const POOL_TTL_MS = positiveIntEnv('CASCADE_POOL_TTL_MS', 30 * 60 * 1000);
 const POOL_MAX = 500;
+const KEY_VERSION = 2;
 
-// fingerprint -> {
-//   cascadeId, sessionId, lsPort, apiKey,
-//   callerKey, stepOffset, generatorOffset,
-//   createdAt, lastAccess
-// }
 const _pool = new Map();
 
 const stats = { hits: 0, misses: 0, stores: 0, evictions: 0, expired: 0 };
@@ -45,13 +43,15 @@ function sha256(s) {
   return createHash('sha256').update(s).digest('hex');
 }
 
+function shortDigest(s, n = 16) {
+  return sha256(String(s ?? '')).slice(0, n);
+}
+
 // Client-injected meta tags whose bodies change every turn (cwd snapshot,
 // todo state, current time, hook output, slash-command echo). If we hash
 // these, the fingerprint drifts even when the real user text is unchanged
 // and Cascade reuse silently falls back to fresh for every call
-// (issue #24 — Claude Code users reported persistent reuse=false despite
-// PR #36's stableTurns fix because this class of drift wasn't being
-// neutralised). Strip them before hashing.
+// (issue #24). Strip them before hashing.
 const META_TAG_NAMES = new Set([
   'system-reminder',
   'command-message',
@@ -90,71 +90,263 @@ function stripMetaTags(s) {
   return stripped;
 }
 
-function canonicalContentBlock(part) {
-  if (typeof part?.text === 'string') return part.text;
-  const type = String(part?.type || '').toLowerCase();
-  if (type === 'image' || type === 'image_url' || type === 'input_image'
-    || type === 'document' || type === 'file' || type === 'input_file'
-    || part?.source?.type === 'base64' || part?.image_url) {
-    return `[${type || 'binary'} omitted]`;
-  }
-  const raw = JSON.stringify(part ?? '');
-  if (/"data"\s*:\s*"[A-Za-z0-9+/=]{128,}"/.test(raw)) return '[binary omitted]';
-  return raw;
+// Stable JSON: recursively sort object keys so {b:1,a:2} and {a:2,b:1}
+// produce the same string. Without this, two equivalent inputs hash
+// differently when client serialization order varies.
+function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(v).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
 }
 
-/**
- * Canonicalise a message list for hashing. Strips anything that could drift
- * between turns (id, name, tool metadata, client meta-tags) and normalises
- * content to a string so array/string forms collide correctly.
- */
-function canonicalise(messages) {
-  return messages.map(m => {
-    let raw;
-    if (typeof m.content === 'string') raw = m.content;
-    else if (Array.isArray(m.content)) raw = m.content.map(p => canonicalContentBlock(p)).join('');
-    else raw = JSON.stringify(m.content ?? '');
-    return { role: m.role, content: stripMetaTags(raw) };
+// Project one content block into a typed canonical record. Returns
+// { type, ...payload } where payload uses stable hashes for binary media.
+// `unhashable=true` flags blocks we cannot stably digest — caller's
+// canonicalise() turns this into a `null` fingerprint, disabling reuse for
+// the request rather than silently colliding distinct media inputs.
+function canonicalContentBlock(part) {
+  if (typeof part?.text === 'string') return { type: 'text', text: stripMetaTags(part.text) };
+  if (typeof part === 'string') return { type: 'text', text: stripMetaTags(part) };
+  const type = String(part?.type || '').toLowerCase();
+  // image_url block (OpenAI / Anthropic image_url style)
+  if (type === 'image_url' || type === 'image' || type === 'input_image') {
+    const url = part?.image_url?.url || part?.url || '';
+    if (typeof url === 'string' && url.startsWith('data:')) {
+      const comma = url.indexOf(',');
+      const meta = comma > 0 ? url.slice(5, comma) : '';
+      const data = comma > 0 ? url.slice(comma + 1) : url;
+      return { type: 'image', meta, hash: shortDigest(data, 16) };
+    }
+    if (typeof url === 'string' && url) return { type: 'image', url };
+    if (typeof part?.source === 'object') {
+      const src = part.source;
+      if (src.type === 'base64' && typeof src.data === 'string') {
+        return { type: 'image', meta: src.media_type || '', hash: shortDigest(src.data, 16) };
+      }
+      if (src.type === 'url' && typeof src.url === 'string') {
+        return { type: 'image', url: src.url };
+      }
+      if (typeof src.file_id === 'string') return { type: 'image', file_id: src.file_id };
+    }
+    return { type: 'image', unhashable: true };
+  }
+  // file / document block
+  if (type === 'document' || type === 'file' || type === 'input_file') {
+    const fileId = part?.file_id || part?.source?.file_id;
+    if (typeof fileId === 'string') return { type: 'file', file_id: fileId };
+    if (part?.source?.type === 'base64' && typeof part.source.data === 'string') {
+      return { type: 'file', meta: part.source.media_type || '', hash: shortDigest(part.source.data, 16) };
+    }
+    if (typeof part?.source?.url === 'string') return { type: 'file', url: part.source.url };
+    return { type: 'file', unhashable: true };
+  }
+  // Any other typed block — stable JSON of the whole part. Catches things
+  // like { type: 'tool_use', ... } when they appear in mixed content arrays.
+  return { type: type || 'unknown', json: stableStringify(part ?? '') };
+}
+
+function canonicaliseContent(content) {
+  if (typeof content === 'string') return [{ type: 'text', text: stripMetaTags(content) }];
+  if (!Array.isArray(content)) return [{ type: 'json', json: stableStringify(content ?? '') }];
+  return content.map(canonicalContentBlock);
+}
+
+function hasUnhashableMedia(blocks) {
+  return Array.isArray(blocks) && blocks.some(b => b?.unhashable === true);
+}
+
+// Project assistant tool_calls into a stable digest. Both OpenAI
+// `tool_calls: [{id, function:{name, arguments}}]` and Anthropic
+// `content: [{type:'tool_use', name, input}]` shapes need to map to the
+// same canonical form so the same logical call digests identically.
+function projectAssistantToolCalls(m) {
+  const calls = [];
+  if (Array.isArray(m?.tool_calls)) {
+    for (const tc of m.tool_calls) {
+      const name = tc?.function?.name || tc?.name || '';
+      const args = tc?.function?.arguments;
+      let argsCanonical;
+      if (typeof args === 'string') {
+        try { argsCanonical = stableStringify(JSON.parse(args)); }
+        catch { argsCanonical = args; }
+      } else if (args !== undefined) {
+        argsCanonical = stableStringify(args);
+      } else if (tc?.input !== undefined) {
+        argsCanonical = stableStringify(tc.input);
+      } else {
+        argsCanonical = '';
+      }
+      calls.push({ name, args: argsCanonical });
+    }
+  }
+  if (Array.isArray(m?.content)) {
+    for (const part of m.content) {
+      if (part?.type === 'tool_use') {
+        calls.push({ name: part.name || '', args: stableStringify(part.input ?? null) });
+      }
+    }
+  }
+  return calls;
+}
+
+function projectMessage(m) {
+  const role = m?.role;
+  if (role === 'system') {
+    const blocks = canonicaliseContent(m.content);
+    return { role: 'system', content: blocks };
+  }
+  if (role === 'user') {
+    const blocks = canonicaliseContent(m.content);
+    return { role: 'user', content: blocks };
+  }
+  if (role === 'tool') {
+    return {
+      role: 'tool_result',
+      tool_call_id: typeof m?.tool_call_id === 'string' ? m.tool_call_id : '',
+      content: canonicaliseContent(m.content),
+    };
+  }
+  if (role === 'assistant') {
+    // Project to a stable text + tool_calls digest. Drop reasoning / metadata
+    // / id fields that drift across re-renders.
+    const blocks = canonicaliseContent(m.content);
+    const text = blocks
+      .filter(b => b.type === 'text')
+      .map(b => (b.text || '').replace(/\s+/g, ' ').trim())
+      .join('\n')
+      .trim();
+    const toolCalls = projectAssistantToolCalls(m);
+    return { role: 'assistant', text, tool_calls: toolCalls };
+  }
+  // Unknown role — preserve as-is so it's neither swallowed nor confused
+  // with a known projection.
+  return { role: String(role || 'unknown'), content: canonicaliseContent(m?.content) };
+}
+
+function systemDigest(messages) {
+  // CASCADE_REUSE_HASH_SYSTEM=0 is an explicit opt-out for callers whose
+  // system prompt drifts every turn (Claude Code with `cwd` snapshots etc.)
+  // and who care more about hit rate than strict isolation. Default ON
+  // since the audit found that "default exclude system" caused silent
+  // cross-system reuse.
+  if (process.env.CASCADE_REUSE_HASH_SYSTEM === '0') return '';
+  const sys = messages.filter(m => m?.role === 'system');
+  if (!sys.length) return '';
+  return shortDigest(stableStringify(sys.map(projectMessage)), 32);
+}
+
+function toolContextDigest(opts = {}) {
+  if (!opts.emulateTools) return '';
+  const tools = Array.isArray(opts.tools) ? opts.tools.map(t => {
+    const fn = t?.function || t;
+    return {
+      name: fn?.name || '',
+      description: fn?.description || '',
+      parameters: fn?.parameters ?? fn?.input_schema ?? null,
+    };
+  }) : [];
+  return shortDigest(stableStringify({
+    tools,
+    tool_choice: opts.toolChoice ?? null,
+    preambleTier: opts.preambleTier ?? null,
+    toolPreambleHash: opts.toolPreamble ? shortDigest(opts.toolPreamble, 16) : '',
+  }), 32);
+}
+
+// Build the array of stable turns up to (but not including) the newest user
+// or tool turn. This is what fpBefore digests. It includes every assistant
+// turn and every system/user/tool turn except the trailing user/tool turn.
+function priorTurnsForBefore(messages) {
+  if (!Array.isArray(messages)) return null;
+  // Find newest user/tool turn — that's the "newest" we drop.
+  let newestStable = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const r = messages[i]?.role;
+    if (r === 'user' || r === 'tool') { newestStable = i; break; }
+  }
+  if (newestStable < 0) return null;
+  // Need at least one prior turn to make reuse meaningful.
+  if (newestStable === 0) return null;
+  return messages.slice(0, newestStable);
+}
+
+function projectTurns(turns) {
+  if (!Array.isArray(turns)) return null;
+  const projected = [];
+  for (const m of turns) {
+    if (m?.role === 'system') continue; // system handled separately
+    const p = projectMessage(m);
+    if (Array.isArray(p.content) && hasUnhashableMedia(p.content)) return { unhashable: true };
+    projected.push(p);
+  }
+  return { turns: projected };
+}
+
+function buildKeyPayload({ messages, modelKey, callerKey, opts, scope }) {
+  const sys = systemDigest(messages);
+  const tools = toolContextDigest(opts);
+  const turnSlice = scope === 'after' ? messages : priorTurnsForBefore(messages);
+  if (!turnSlice) return null;
+  const projection = projectTurns(turnSlice);
+  if (!projection) return null;
+  if (projection.unhashable) return null;
+  return stableStringify({
+    v: KEY_VERSION,
+    caller: String(callerKey || ''),
+    model: String(modelKey || ''),
+    route: opts?.route || 'chat',
+    sys,
+    tools,
+    turns: projection.turns,
   });
 }
 
 /**
- * Fingerprint for "resume this conversation". Hash only stable caller-visible
- * turns: normal user messages and tool results. Assistant messages are
- * excluded because clients may restructure content arrays, add tool_use
- * blocks, or modify text between turns, causing hash mismatches and 0% hit
- * rate. Claude Code's system prompt also changes frequently as local project
- * state changes, so it is excluded by default; set
- * CASCADE_REUSE_HASH_SYSTEM=1 if strict system-prompt isolation matters more
- * than reuse hit rate for a deployment.
+ * Fingerprint for "I'm about to send this newest user turn — find me a
+ * cascade I can resume." Hashes everything before the newest user/tool
+ * turn (including assistant text + tool_calls digest, system, tools).
+ *
+ * Signatures (backward-compatible):
+ *   fingerprintBefore(messages)
+ *   fingerprintBefore(messages, modelKey)
+ *   fingerprintBefore(messages, modelKey, callerKey)
+ *   fingerprintBefore(messages, modelKey, callerKey, opts)
+ * where opts = { tools, toolChoice, toolPreamble, emulateTools,
+ *                preambleTier, route }
+ *
+ * Returns null when reuse should be disabled (single-turn, unhashable
+ * media in prior history, etc.).
  */
-function systemPrefix(messages) {
-  if (process.env.CASCADE_REUSE_HASH_SYSTEM !== '1') return '';
-  return messages
-    .filter(m => m.role === 'system')
-    .map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))
-    .join('\0');
+export function fingerprintBefore(messages, modelKey = '', callerKey = '', opts = {}) {
+  const payload = buildKeyPayload({ messages, modelKey, callerKey, opts, scope: 'before' });
+  if (!payload) return null;
+  return sha256(payload);
 }
 
-function stableTurns(messages) {
-  return messages
-    .filter(m => m.role === 'user' || m.role === 'tool')
-    .map(m => m.role === 'tool'
-      ? { ...m, role: 'tool_result' }
-      : m);
-}
-
-export function fingerprintBefore(messages, modelKey = '', callerKey = '') {
-  if (!Array.isArray(messages) || messages.length < 2) return null;
-  const turns = stableTurns(messages);
-  if (turns.length < 2) return null;
-  return sha256(String(callerKey || '') + '\0' + modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(turns.slice(0, -1))));
-}
-
-export function fingerprintAfter(messages, modelKey = '', callerKey = '') {
-  const turns = stableTurns(messages);
-  if (!turns.length) return null;
-  return sha256(String(callerKey || '') + '\0' + modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(turns)));
+/**
+ * Fingerprint for "I just finished a turn — store the cascade under the
+ * key the next request will look up." Same shape as fingerprintBefore but
+ * over the FULL message list (the newest user turn is included so the
+ * post-turn fingerprint represents server state right after that turn).
+ */
+export function fingerprintAfter(messages, modelKey = '', callerKey = '', opts = {}) {
+  if (!Array.isArray(messages) || !messages.length) return null;
+  // For "after" we want the entire trajectory we've seen, including the
+  // newest user/tool/assistant turn the caller just exchanged with us.
+  const sys = systemDigest(messages);
+  const tools = toolContextDigest(opts);
+  const projection = projectTurns(messages.filter(m => m?.role !== 'system'));
+  if (!projection || projection.unhashable) return null;
+  return sha256(stableStringify({
+    v: KEY_VERSION,
+    caller: String(callerKey || ''),
+    model: String(modelKey || ''),
+    route: opts?.route || 'chat',
+    sys,
+    tools,
+    turns: projection.turns,
+  }));
 }
 
 function effectiveTtl(entry) {
@@ -181,8 +373,12 @@ function prune(now) {
  * from the pool — caller is expected to call `checkin()` with a new
  * fingerprint on success (or just drop it on failure and a fresh cascade
  * will be created next turn).
+ *
+ * v2.0.25 added optional `expected` for atomic owner verification at the
+ * pool boundary (MED-3). Pass `{ apiKey, lsPort, lsGeneration }` and a
+ * mismatch returns null + counts a miss without leaking the entry.
  */
-export function checkout(fingerprint, callerKey = '') {
+export function checkout(fingerprint, callerKey = '', expected = null) {
   if (!fingerprint) { stats.misses++; return null; }
   const entry = _pool.get(fingerprint);
   if (!entry) { stats.misses++; return null; }
@@ -196,6 +392,14 @@ export function checkout(fingerprint, callerKey = '') {
     stats.misses++;
     return null;
   }
+  if (expected) {
+    if (expected.apiKey && entry.apiKey && expected.apiKey !== entry.apiKey) { stats.misses++; return null; }
+    if (expected.lsPort && entry.lsPort && expected.lsPort !== entry.lsPort) { stats.misses++; return null; }
+    if (expected.lsGeneration != null && entry.lsGeneration != null && expected.lsGeneration !== entry.lsGeneration) {
+      stats.misses++;
+      return null;
+    }
+  }
   stats.hits++;
   return entry;
 }
@@ -206,25 +410,32 @@ export function checkout(fingerprint, callerKey = '') {
  * `ttlHintMs` (optional) extends this entry's expiry past the pool's
  * default 30 min — used to honour Anthropic prompt-caching markers that
  * request a 1h ttl. Pass `undefined` (default) to keep the existing
- * entry-level hint when restoring across turns.
+ * entry-level hint when restoring across turns. Pass `0` (or negative)
+ * to clear any inherited hint and fall back to the default TTL — used
+ * when the next request explicitly does NOT carry a 1h marker so a stale
+ * 1h window doesn't outlive its source request (MED-2).
  */
 export function checkin(fingerprint, entry, callerKey = '', ttlHintMs) {
   if (!fingerprint || !entry) return;
   const now = Date.now();
-  // When the caller didn't pass an explicit hint, preserve any hint
-  // that was already on the source entry — restoring after a successful
-  // turn shouldn't silently shorten the TTL the original request asked for.
-  const resolvedHint = ttlHintMs !== undefined
-    ? ttlHintMs
-    : entry.ttlHintMs;
+  let resolvedHint;
+  if (ttlHintMs === undefined) {
+    resolvedHint = entry.ttlHintMs;
+  } else if (ttlHintMs === null || !Number.isFinite(ttlHintMs) || ttlHintMs <= 0) {
+    resolvedHint = undefined;
+  } else {
+    resolvedHint = ttlHintMs;
+  }
   _pool.set(fingerprint, {
     cascadeId: entry.cascadeId,
     sessionId: entry.sessionId,
     lsPort: entry.lsPort,
+    lsGeneration: entry.lsGeneration,
     apiKey: entry.apiKey,
     callerKey: callerKey || entry.callerKey || '',
     stepOffset: Number.isFinite(entry.stepOffset) ? entry.stepOffset : 0,
     generatorOffset: Number.isFinite(entry.generatorOffset) ? entry.generatorOffset : 0,
+    historyCoverage: entry.historyCoverage || null,
     createdAt: entry.createdAt || now,
     lastAccess: now,
     ...(Number.isFinite(resolvedHint) && resolvedHint > 0 ? { ttlHintMs: resolvedHint } : {}),
@@ -234,15 +445,23 @@ export function checkin(fingerprint, entry, callerKey = '', ttlHintMs) {
 }
 
 /**
- * Drop any entries that belong to a (apiKey, lsPort) pair that just went
- * away (account removed, LS restarted). Keeps the pool honest.
+ * Drop any entries that belong to a (apiKey, lsPort, lsGeneration) tuple
+ * that just went away (account removed, LS restarted, LS replaced on the
+ * same port). Keeps the pool honest.
  */
-export function invalidateFor({ apiKey, lsPort }) {
+export function invalidateFor({ apiKey, lsPort, lsGeneration } = {}) {
   let dropped = 0;
   for (const [fp, e] of _pool) {
-    if ((apiKey && e.apiKey === apiKey) || (lsPort && e.lsPort === lsPort)) {
-      _pool.delete(fp);
-      dropped++;
+    if (apiKey && e.apiKey === apiKey) { _pool.delete(fp); dropped++; continue; }
+    if (lsPort && e.lsPort === lsPort) {
+      // When generation is supplied on both sides, only drop entries for the
+      // SAME generation — lets a same-port LS replace the old one without
+      // nuking healthy entries from the new one. When either side lacks a
+      // generation tag, fall back to port-only matching for safety.
+      if (lsGeneration == null || e.lsGeneration == null || e.lsGeneration === lsGeneration) {
+        _pool.delete(fp);
+        dropped++;
+      }
     }
   }
   return dropped;

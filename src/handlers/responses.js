@@ -855,12 +855,12 @@ export async function handleResponses(body, deps = {}) {
   const requestedTools = chatBody.tools || [];
 
   if (!body.stream) {
-    const result = await chatHandler({ ...chatBody, stream: false }, context);
+    const result = await chatHandler({ ...chatBody, stream: false, __route: 'responses' }, context);
     if (result.status !== 200) return result;
     return { status: 200, body: chatToResponse(result.body, requestedModel, responseId, genMessageId(), requestedTools) };
   }
 
-  const streamResult = await chatHandler({ ...chatBody, stream: true }, context);
+  const streamResult = await chatHandler({ ...chatBody, stream: true, __route: 'responses' }, context);
   if (!streamResult.stream) return streamResult;
 
   return {

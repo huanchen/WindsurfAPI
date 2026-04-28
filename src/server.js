@@ -301,7 +301,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req)) });
+    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -344,7 +344,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req)) } });
+    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body) } });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -378,7 +378,7 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
-    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req)) });
+    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
     const anthropicHeaders = {
       'request-id': 'req-' + randomUUID(),
       'anthropic-model': body.model || '',

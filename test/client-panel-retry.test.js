@@ -189,4 +189,101 @@ describe('WindsurfClient cascade panel retry', () => {
       assert.match(text, /fresh-output/);
     });
   });
+
+  it('v2.0.25 HIGH-2: cascade not_found triggers fresh fallback and marks reuse entry invalidated', async () => {
+    process.env.CASCADE_POLL_INTERVAL_MS = '10';
+    process.env.CASCADE_IDLE_GRACE_MS = '1';
+    process.env.CASCADE_MAX_WAIT_MS = '500';
+    process.env.CASCADE_COLD_STALL_BASE_MS = '500';
+    process.env.CASCADE_WARM_STALL_MS = '500';
+    process.env.GRPC_PROTOCOL = 'connect';
+
+    let startCount = 0;
+    let sendCount = 0;
+    let observedFreshCascadeId = null;
+
+    await withFakeLanguageServer((stream, headers) => {
+      const chunks = [];
+      stream.on('data', chunk => chunks.push(chunk));
+      stream.on('end', () => {
+        const path = String(headers[':path'] || '');
+        const payload = requestPayload(Buffer.concat(chunks), headers);
+        const method = path.split('/').pop();
+
+        if (method === 'StartCascade') {
+          startCount++;
+          observedFreshCascadeId = 'fresh-' + startCount;
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(startCascadeResponse(observedFreshCascadeId), headers));
+          return;
+        }
+
+        if (method === 'SendUserCascadeMessage') {
+          sendCount++;
+          if (sendCount === 1) {
+            // Simulate the upstream telling us the cascade we tried to
+            // resume is gone — different message text from "panel state
+            // not found" so we can prove isExpiredCascade triggers the
+            // same recovery and not isPanelMissing.
+            const err = errorBody('not_found: cascade trajectory has been expired by ttl', headers);
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            if (err.trailers) stream.additionalHeaders(err.trailers);
+            stream.end(err.body);
+            return;
+          }
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(Buffer.alloc(0), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectorySteps') {
+          const offset = readStepOffset(payload);
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(trajectoryStepsResponse(offset === 0 ? 'recovered-output' : ''), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectory') {
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(trajectoryStatusResponse(1), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(Buffer.alloc(0), headers));
+          return;
+        }
+
+        stream.respond({ ':status': 404 });
+        stream.end();
+      });
+    }, async (port) => {
+      const { WindsurfClient } = await import('../src/client.js');
+      const client = new WindsurfClient('test-api-key', port, 'csrf-token');
+      const chunks = await client.cascadeChat([
+        { role: 'user', content: 'turn1' },
+        { role: 'assistant', content: 'reply1' },
+        { role: 'user', content: 'turn2' },
+      ], 0, 'claude-sonnet-4-6', {
+        reuseEntry: {
+          cascadeId: 'long-dead-cascade',
+          sessionId: 'long-dead-session',
+          lsPort: port,
+          apiKey: 'test-api-key',
+          stepOffset: 5,
+          generatorOffset: 5,
+        },
+      });
+
+      // Recovery path actually fired: client called StartCascade after the
+      // expired-send and got a fresh cascadeId on the trailing send.
+      assert.equal(sendCount, 2, 'should retry send once after recovery');
+      assert.equal(startCount, 1, 'recovery path should issue exactly one fresh StartCascade');
+      assert.equal(chunks.cascadeId, observedFreshCascadeId, 'final cascadeId must be the fresh one, not the dead reuseEntry.cascadeId');
+      assert.notEqual(chunks.cascadeId, 'long-dead-cascade');
+      assert.equal(chunks.reuseEntryInvalidated, true, 'should signal the caller to skip restoring the dead entry');
+      assert.match(chunks.map(c => c.text || '').join(''), /recovered-output/);
+    });
+  });
 });

@@ -30,6 +30,39 @@ const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
 
+// Build the option bag the v2.0.25 semantic key needs. tools / tool_choice /
+// preamble are baked into the digest so a tool schema change misses instead
+// of silently resuming a cascade where the upstream model has the old tool
+// signatures cached.
+function buildReuseOpts({ tools, toolChoice, toolPreamble, preambleTier, emulateTools, route }) {
+  return {
+    tools: Array.isArray(tools) ? tools : [],
+    toolChoice: toolChoice ?? null,
+    toolPreamble: toolPreamble || '',
+    preambleTier: preambleTier || null,
+    emulateTools: !!emulateTools,
+    route: route || 'chat',
+  };
+}
+
+// Build a synthetic assistant turn from the response we just produced so
+// fingerprintAfter() reflects the post-turn server state. Without this, the
+// next request from the same client (which carries [u1, ourA1, u2]) computes
+// fpBefore over [u1, ourA1] but the stored fpAfter was over [u1] only — they
+// no longer match and we silently miss the reuse we just set up.
+function appendAssistantTurn(messages, allText, toolCalls) {
+  const m = { role: 'assistant', content: allText || '' };
+  if (Array.isArray(toolCalls) && toolCalls.length) {
+    m.tool_calls = toolCalls.map(tc => ({
+      function: {
+        name: tc?.name || tc?.function?.name || '',
+        arguments: tc?.argumentsJson || tc?.arguments || tc?.function?.arguments || '{}',
+      },
+    }));
+  }
+  return [...(messages || []), m];
+}
+
 // Cap exponential backoff before falling over to the next account when
 // upstream Cascade returns "internal error occurred". Without this a
 // 9-account pool hammers the upstream within ~10s and every attempt
@@ -322,6 +355,21 @@ const CASCADE_REUSE_STRICT_RETRY_MS = (() => {
 })();
 const OPUS47_TOOL_EMULATED_REUSE = process.env.OPUS47_TOOL_EMULATED_REUSE !== '0';
 const OPUS47_STRICT_REUSE = process.env.OPUS47_STRICT_REUSE !== '0';
+// HIGH-3: a shared API key with no per-user / per-session signal lets two
+// concurrent end users behind the same proxy step on each other's cascade
+// state. Default off; set CASCADE_REUSE_ALLOW_SHARED_API_KEY=1 to opt back
+// into the legacy permissive behavior (single-user proxies, internal use).
+const CASCADE_REUSE_ALLOW_SHARED_API_KEY = process.env.CASCADE_REUSE_ALLOW_SHARED_API_KEY === '1';
+
+// True when callerKey has any per-user / per-session dimension beyond a
+// bare API key (`api:<hash>`). Bare API-key callers without a user signal
+// share state across concurrent requests — see HIGH-3 above.
+function hasPerUserScope(callerKey) {
+  if (typeof callerKey !== 'string' || !callerKey) return false;
+  if (callerKey.includes(':user:')) return true;
+  if (callerKey.startsWith('session:') || callerKey.startsWith('client:')) return true;
+  return false;
+}
 
 function isToolSensitiveOpusModel(modelKey = '') {
   // Opus-class models share the same prompt-injection / Claude-Code-tools
@@ -924,6 +972,7 @@ export async function handleChatCompletions(body, context = {}) {
   // priors. See extractCallerEnvironment() above for the parser.
   const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
   let toolPreamble = '';
+  let preambleTier = null;
   // Payload budget for the proto-level tool preamble. The upstream LS
   // panel state caps total request size at ~30KB; the preamble alone can
   // approach that with 30+ tools (Claude Code, opencode, Cline). Past the
@@ -934,6 +983,7 @@ export async function handleChatCompletions(body, context = {}) {
   // which broke real opencode / Claude Code setups with 30-50 MCP tools.
   if (emulateTools) {
     const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv);
+    preambleTier = budget.tier;
     if (budget.compacted) {
       log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
     }
@@ -1049,6 +1099,7 @@ export async function handleChatCompletions(body, context = {}) {
       checkMessageRateLimit: checkMessageRateLimitFn,
       waitForAccount: waitForAccountFn,
       cachePolicy,
+      fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
     });
   }
 
@@ -1076,12 +1127,22 @@ export async function handleChatCompletions(body, context = {}) {
   // instead of replaying the whole history.
   //
   // Conversation reuse lets Cascade keep server-side context across turns.
-  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey: routingModelKey })
+  const sharedApiKeyNoScope = !hasPerUserScope(callerKey) && !CASCADE_REUSE_ALLOW_SHARED_API_KEY;
+  if (sharedApiKeyNoScope) {
+    log.info(`Chat[${reqId}]: cascade reuse disabled — shared API key with no per-user dimension (set CASCADE_REUSE_ALLOW_SHARED_API_KEY=1 to override)`);
+  }
+  const reuseEnabled = !sharedApiKeyNoScope
+    && shouldUseCascadeReuse({ useCascade, emulateTools, modelKey: routingModelKey })
     && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey: routingModelKey }));
   const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey: routingModelKey });
-  const fpBefore = reuseEnabled ? fingerprintBefore(messages, routingModelKey, callerKey) : null;
+  const fpOpts = buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier: preambleTier || null, emulateTools, route: body.__route || 'chat' });
+  const fpBefore = reuseEnabled ? fingerprintBefore(messages, routingModelKey, callerKey, fpOpts) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
   let checkedOutReuseEntry = reuseEntry;
+  // v2.0.25 HIGH-2: a SendUserCascadeMessage that hit "cascade not found"
+  // marks the entry dead — any restore path further down must drop it
+  // instead of putting a known-dead cascadeId back in the pool.
+  let reuseEntryDead = false;
   if (reuseEntry) log.info(`Chat[${reqId}]: reuse HIT cascade=${reuseEntry.cascadeId.slice(0, 8)} model=${displayModel}`);
 
   // Non-stream: retry with a different account on model-not-available errors
@@ -1172,7 +1233,7 @@ export async function handleChatCompletions(body, context = {}) {
           if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
             markRateLimited(acct.apiKey, rl.retryAfterMs, routingModelKey);
           }
-          if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+          if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
             const availability = getAccountAvailability(acct.apiKey, routingModelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
             poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
@@ -1216,16 +1277,17 @@ export async function handleChatCompletions(body, context = {}) {
     const result = await nonStreamResponse(
       client, chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
-      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy } : null,
+      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
       emulateTools, toolPreamble, wantJson, cachePolicy,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
+    if (result.reuseEntryInvalid) reuseEntryDead = true;
     lastErr = result;
     const errType = result.body?.error?.type;
     // Rate limit: this account is done for this model, try the next one
     if (errType === 'rate_limit_exceeded') {
-      if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+      if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
         const availability = getAccountAvailability(acct.apiKey, routingModelKey);
         const retryAfterMs = strictReuseRetryMs(availability);
         poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
@@ -1267,7 +1329,7 @@ export async function handleChatCompletions(body, context = {}) {
   }
   // 所有账号都遇到 Cascade transient 时，账号轮换已经无法修复；返回明确错误，避免误报成限流或模型不可用。
   if (internalCount > 0 && tried.length > 0 && internalCount >= tried.length) {
-    if (checkedOutReuseEntry && fpBefore) {
+    if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
       poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
       log.info(`Chat[${reqId}]: restored checked-out cascade after all-internal-error chain`);
     }
@@ -1281,7 +1343,7 @@ export async function handleChatCompletions(body, context = {}) {
   // If all accounts exhausted, check if it's because they're all rate-limited
   const temporaryUnavailable = isAllTemporarilyUnavailable(routingModelKey);
   if (temporaryUnavailable.allUnavailable) {
-    if (checkedOutReuseEntry && fpBefore) {
+    if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
       poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
       log.info(`Chat[${reqId}]: restored checked-out cascade after temporary unavailability`);
     }
@@ -1309,9 +1371,11 @@ export async function handleChatCompletions(body, context = {}) {
       return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
     }
   }
-  if (checkedOutReuseEntry && fpBefore) {
+  if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
     poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
     log.info(`Chat[${reqId}]: restored checked-out cascade after failed request`);
+  } else if (reuseEntryDead) {
+    log.info(`Chat[${reqId}]: reuse entry was invalidated (cascade not_found upstream); not restoring to pool`);
   }
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
@@ -1376,16 +1440,24 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // Check the cascade back into the pool under the *post-turn* fingerprint
     // so the next request in the same conversation can resume it.
     if (poolCtx && cascadeMeta?.cascadeId && (allText || toolCalls.length)) {
-      const fpAfter = fingerprintAfter(messages, modelKey, poolCtx.callerKey || '');
+      const turnComplete = appendAssistantTurn(messages, allText, toolCalls);
+      const fpAfter = fingerprintAfter(turnComplete, modelKey, poolCtx.callerKey || '', poolCtx.fpOpts);
+      const ttlHint = ttlHintFromCachePolicy(poolCtx.cachePolicy);
+      // Explicit 0 (not undefined) clears any inherited 1h hint when the
+      // current request didn't ask for it (MED-2). ttlHintFromCachePolicy
+      // returns undefined for "no opinion"; pass 0 when we know the user
+      // wants the default TTL.
       poolCheckin(fpAfter, {
         cascadeId: cascadeMeta.cascadeId,
         sessionId: cascadeMeta.sessionId,
         lsPort: poolCtx.lsPort,
+        lsGeneration: cascadeMeta.lsGeneration || poolCtx.lsGeneration,
         apiKey: poolCtx.apiKey,
         stepOffset: Number.isFinite(cascadeMeta.stepOffset) ? cascadeMeta.stepOffset : poolCtx.reuseEntry?.stepOffset,
         generatorOffset: Number.isFinite(cascadeMeta.generatorOffset) ? cascadeMeta.generatorOffset : poolCtx.reuseEntry?.generatorOffset,
+        historyCoverage: cascadeMeta.historyCoverage || poolCtx.reuseEntry?.historyCoverage || null,
         createdAt: poolCtx.reuseEntry?.createdAt,
-      }, poolCtx.callerKey || '', ttlHintFromCachePolicy(poolCtx.cachePolicy));
+      }, poolCtx.callerKey || '', ttlHint === undefined ? 0 : ttlHint);
     }
 
     reportSuccess(apiKey);
@@ -1481,6 +1553,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     }
     return {
       status: isTransient ? 502 : (err.isModelError ? 403 : 502),
+      reuseEntryInvalid: !!err.reuseEntryInvalid,
       body: { error: {
         message: isTransient
           ? upstreamTransientErrorMessage(model, 1, isTransport ? 'cascade_transport' : 'internal_error')
@@ -1500,6 +1573,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
   // throw a ReferenceError mid-stream — the exact failure surface reported
   // in issues #82 and #83.
   const cachePolicy = deps.cachePolicy || null;
+  const fpOpts = deps.fpOpts || { route: 'chat' };
   return {
     status: 200,
     stream: true,
@@ -1595,12 +1669,16 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       // Cascade conversation pool (stream path). Opus 4.7 tool-emulated
       // requests opt in even when the global experiment toggle is off, because
       // replaying full Claude Code history is what triggers context blowups.
-      const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })
+      const sharedApiKeyNoScopeStream = !hasPerUserScope(callerKey) && !CASCADE_REUSE_ALLOW_SHARED_API_KEY;
+      const reuseEnabled = !sharedApiKeyNoScopeStream
+        && shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })
         && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey }));
       const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey });
-      const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey, callerKey) : null;
+      const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey, callerKey, fpOpts) : null;
       let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
       let checkedOutReuseEntry = reuseEntry;
+      // v2.0.25 HIGH-2: same dead-entry signal as the non-stream path.
+      let reuseEntryDead = false;
       if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… stream model=${model}`);
 
       // Strip <tool_call>/<tool_result> blocks in Cascade mode.
@@ -1782,7 +1860,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                 if (Number.isFinite(rl.retryAfterMs) && rl.retryAfterMs > 0) {
                   markRateLimited(acct.apiKey, rl.retryAfterMs, modelKey);
                 }
-                if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+                if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
                   const availability = getAccountAvailability(acct.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
                   lastErr = Object.assign(
@@ -1843,16 +1921,20 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             emitThinking(pathStreamThinking.flush());
             // Pool check-in on success (cascade only)
             if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
-              const fpAfter = fingerprintAfter(messages, modelKey, callerKey);
+              const turnComplete = appendAssistantTurn(messages, accText, collectedToolCalls);
+              const fpAfter = fingerprintAfter(turnComplete, modelKey, callerKey, fpOpts);
+              const ttlHint = ttlHintFromCachePolicy(cachePolicy);
               poolCheckin(fpAfter, {
                 cascadeId: cascadeResult.cascadeId,
                 sessionId: cascadeResult.sessionId,
                 lsPort: ls.port,
+                lsGeneration: cascadeResult.lsGeneration || ls.generation,
                 apiKey: currentApiKey,
                 stepOffset: Number.isFinite(cascadeResult.stepOffset) ? cascadeResult.stepOffset : reuseEntry?.stepOffset,
                 generatorOffset: Number.isFinite(cascadeResult.generatorOffset) ? cascadeResult.generatorOffset : reuseEntry?.generatorOffset,
+                historyCoverage: cascadeResult.historyCoverage || reuseEntry?.historyCoverage || null,
                 createdAt: reuseEntry?.createdAt,
-              }, callerKey, ttlHintFromCachePolicy(cachePolicy));
+              }, callerKey, ttlHint === undefined ? 0 : ttlHint);
             }
             // success
             if (hadSuccess) reportSuccess(currentApiKey);
@@ -1894,6 +1976,10 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           } catch (err) {
             lastErr = err;
             reuseEntry = null; // don't try to reuse on retry
+            // v2.0.25 HIGH-2: client.js marks the error when it tried to
+            // recover from a "cascade not found" but couldn't. The entry
+            // we held is dead — never restore it on the way out.
+            if (err.reuseEntryInvalid) reuseEntryDead = true;
             const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
             const isInternal = /internal error occurred.*error id/i.test(err.message);
@@ -1951,9 +2037,11 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           if (allInternal) {
             log.error(`Chat[${reqId}] stream: ${tried.length}/${tried.length} accounts hit upstream transient error — surfacing upstream_transient_error`);
           }
-          if (!hadSuccess && checkedOutReuseEntry && fpBefore) {
+          if (!hadSuccess && !reuseEntryDead && checkedOutReuseEntry && fpBefore) {
             poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
             log.info(`Chat[${reqId}]: restored checked-out cascade after failed stream`);
+          } else if (!hadSuccess && reuseEntryDead) {
+            log.info(`Chat[${reqId}]: stream reuse entry was invalidated (cascade not_found upstream); not restoring to pool`);
           }
 
           if (hadSuccess) {
