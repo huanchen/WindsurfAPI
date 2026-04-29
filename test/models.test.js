@@ -58,10 +58,14 @@ describe('resolveModel Opus 4.7 / legacy alias coverage', () => {
   });
 
   it('documents unsupported bare / separator variants explicitly', () => {
+    // Underscores aren't a recognized separator
     assert.equal(resolveModel('claude_opus_4_7'), 'claude_opus_4_7');
+    // Bare `opus-4.7-xhigh` (no `claude-` prefix on a tier-suffix variant) — not aliased
     assert.equal(resolveModel('opus-4.7-xhigh'), 'opus-4.7-xhigh');
+    // Too bare to disambiguate (sonnet vs opus)
     assert.equal(resolveModel('4.7-medium'), '4.7-medium');
-    assert.equal(resolveModel('opus-4.7-thinking'), 'opus-4.7-thinking');
+    // Note: `opus-4.7-thinking` IS now supported (added by spark-C audit alongside `o4.7`).
+    // See test/models-catalog-correctness.test.js for the positive assertion.
   });
 });
 
