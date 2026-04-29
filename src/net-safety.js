@@ -103,3 +103,15 @@ export async function resolvePublicAddresses(hostname, lookupFn = dnsLookup) {
   return addrs;
 }
 
+export async function validateHostFormat(hostname, lookupFn = dnsLookup) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '');
+  if (!host) throw new Error('ERR_INVALID_HOST');
+  if (net.isIP(host)) {
+    return [{ address: host, family: net.isIP(host) }];
+  }
+  const result = await new Promise((resolve, reject) => {
+    lookupFn(host, { all: true }, (err, addrs) => err ? reject(err) : resolve(addrs));
+  });
+  return Array.isArray(result) ? result : [result];
+}
+

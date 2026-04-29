@@ -25,21 +25,28 @@ import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './wi
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
+import { validateHostFormat } from '../net-safety.js';
+
+export function parseProxyUrl(proxy) {
+  const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
+  if (!proxyParts) return null;
+  return {
+    type: proxyParts[1] || 'http',
+    host: proxyParts[4],
+    port: parseInt(proxyParts[5]),
+    username: proxyParts[2] || '',
+    password: proxyParts[3] || '',
+  };
+}
 
 export function buildBatchProxyBinding(result, proxy) {
   const accountId = result?.account?.id || null;
   if (!result?.success || !proxy || !accountId) return null;
-  const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
-  if (!proxyParts) return null;
+  const parsed = parseProxyUrl(proxy);
+  if (!parsed) return null;
   return {
     accountId,
-    proxy: {
-      type: proxyParts[1] || 'http',
-      host: proxyParts[4],
-      port: parseInt(proxyParts[5]),
-      username: proxyParts[2] || '',
-      password: proxyParts[3] || '',
-    },
+    proxy: parsed,
   };
 }
 
@@ -596,7 +603,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           continue;
         }
         try {
-          const loginProxy = proxy ? { host: proxy } : getProxyConfig().global;
+          const loginProxy = proxy ? parseProxyUrl(proxy) : getProxyConfig().global;
           const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
           const binding = buildBatchProxyBinding(result, proxy);
           if (binding) {
@@ -746,7 +753,11 @@ async function gitStatus() {
 }
 
 async function testProxy({ host, port, username, password, type }) {
-  await assertPublicUrlHost(host);
+  if (config.allowPrivateProxyHosts) {
+    await validateHostFormat(host);
+  } else {
+    await assertPublicUrlHost(host);
+  }
   const { isSocks, createSocksTunnel } = await import('../socks.js');
   const tls = await import('node:tls');
   const targetHost = 'api.ipify.org';
