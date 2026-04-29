@@ -2301,7 +2301,7 @@ const I18n = {
     const indicator = document.getElementById('lang-indicator');
     if (indicator) indicator.textContent = zhMode ? '中文' : 'English';
     const toggleBtn = document.getElementById('lang-toggle-btn');
-    if (toggleBtn) toggleBtn.title = zhMode ? 'Switch to English' : '切换到中文';
+    if (toggleBtn) toggleBtn.title = I18n.t(zhMode ? 'footer.langToggleToEn' : 'footer.langToggleToZh');
   },
 
   async setLocale(lang) {
@@ -2396,10 +2396,10 @@ const App = {
     const errEl = document.getElementById('login-error');
     if (errEl) errEl.textContent = '';
     if (!pw) {
-      if (errEl) errEl.textContent = I18n.t('login.empty') || '请输入密码';
+      if (errEl) errEl.textContent = I18n.t('login.empty');
       return;
     }
-    if (btn) { btn.disabled = true; btn.dataset.origLabel ||= btn.textContent; btn.textContent = I18n.t('login.checking') || '验证中…'; }
+    if (btn) { btn.disabled = true; btn.dataset.origLabel ||= btn.textContent; btn.textContent = I18n.t('login.checking'); }
     try {
       // Pre-flight: check the password against /auth before storing it so a
       // wrong attempt actually shows feedback instead of silently re-rendering
@@ -2407,11 +2407,11 @@ const App = {
       const r = await fetch('/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
       const data = await r.json().catch(() => ({}));
       if (data.locked) {
-        if (errEl) errEl.textContent = I18n.t('login.locked') || '后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启';
+        if (errEl) errEl.textContent = I18n.t('login.locked');
         return;
       }
       if (data.required && !data.valid) {
-        if (errEl) errEl.textContent = I18n.t('login.wrong') || '密码不正确';
+        if (errEl) errEl.textContent = I18n.t('login.wrong');
         document.getElementById('login-password')?.focus();
         return;
       }
@@ -2419,7 +2419,7 @@ const App = {
       localStorage.setItem('dp', pw);
       await this.init();
     } catch (e) {
-      if (errEl) errEl.textContent = (I18n.t('login.networkError') || '无法连接服务器') + ': ' + e.message;
+      if (errEl) errEl.textContent = I18n.t('login.networkError') + ': ' + e.message;
     } finally {
       if (btn) { btn.disabled = false; if (btn.dataset.origLabel) btn.textContent = btn.dataset.origLabel; }
     }
@@ -3232,7 +3232,7 @@ const App = {
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code title="${I18n.t('action.revealKey') || 'reveal & copy'}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
+          <code title="${I18n.t('action.revealKey')}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">

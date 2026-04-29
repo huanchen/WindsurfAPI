@@ -96,7 +96,8 @@
     "selectAll": "Select All",
     "selectNone": "Select None",
     "invert": "Invert",
-    "showPassword": "Show/Hide Password"
+    "showPassword": "Show/Hide Password",
+    "revealKey": "Click to reveal and copy full API key"
   },
 
   "status": {
@@ -894,7 +895,9 @@
 
   "footer": {
     "version": "Version",
-    "langToggle": "Switch language"
+    "langToggle": "Switch language",
+    "langToggleToEn": "Switch to English",
+    "langToggleToZh": "切换到中文"
   },
 
   "placeholder": {

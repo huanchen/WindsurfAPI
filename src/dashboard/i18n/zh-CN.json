@@ -96,7 +96,8 @@
     "selectAll": "全选",
     "selectNone": "全不选",
     "invert": "反选",
-    "showPassword": "显示/隐藏密码"
+    "showPassword": "显示/隐藏密码",
+    "revealKey": "点击显示并复制完整 API Key"
   },
 
   "status": {
@@ -894,7 +895,9 @@
 
   "footer": {
     "version": "版本",
-    "langToggle": "切换语言"
+    "langToggle": "切换语言",
+    "langToggleToEn": "Switch to English",
+    "langToggleToZh": "切换到中文"
   },
 
   "placeholder": {

@@ -211,10 +211,12 @@ while ((match = i18nCallRegex.exec(htmlContent)) !== null) {
 const i18nVarRegex = /I18n\.t\(\s*([^)]+)\s*\)/g;
 while ((match = i18nVarRegex.exec(htmlContent)) !== null) {
   const keyExpr = match[1].trim();
-  // Skip if it's a variable expression (not a string literal)
-  if (!/^[`'"']/.test(keyExpr) && !/^\${/.test(keyExpr) && keyExpr !== 'key') {
-    jsKeys.push(keyExpr);
-  }
+  // Skip quoted strings (already captured), template literals, and bare identifiers
+  // (variables like `key`, `errKey`, `errCode` — runtime-resolved, not literal keys)
+  if (/^[`'"']/.test(keyExpr)) continue;
+  if (/^\${/.test(keyExpr)) continue;
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(keyExpr)) continue;
+  jsKeys.push(keyExpr);
 }
 
 // Deduplicate
