@@ -6,12 +6,15 @@
  * fields 1-9, none accept tool defs; CustomToolSpec exists only as a trajectory
  * event type, not an input). To expose OpenAI-style tool-calling to clients
  * anyway, we serialise the client's `tools[]` into a text protocol the model
- * follows, then parse the emitted <tool_call>...</tool_call> blocks back out
- * of the cascade text stream.
+ * follows, then parse the emitted tool markers back out of the cascade text
+ * stream.
  *
  * Protocol:
  *   - System preamble tells the model the exact emission format
- *   - One-line JSON inside <tool_call>{"name":"...","arguments":{...}}</tool_call>
+ *   - Supported dialects:
+ *     - openai_json_xml: <tool_call>{"name":"...","arguments":{...}}</tool_call>
+ *     - glm47: <tool_call><function>\n<arg_key>...</arg_key>\n<arg_value>...</arg_value>\n</tool_call>
+ *     - kimi_k2: <|tool_calls_section_begin|>...<|tool_call_begin|>...</tool_call>
  *   - On emit, stop generating (we close the response with finish_reason=tool_calls)
  *   - Tool results come back as role:"tool" messages; we fold them into
  *     synthetic user turns wrapped in <tool_result tool_call_id="...">...</tool_result>
@@ -53,8 +56,9 @@ import { log } from '../config.js';
  * This version is for user-message injection (legacy fallback).
  * Prefer buildToolPreambleForProto() for system-prompt-level injection.
  */
-export function buildToolPreamble(tools) {
+export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, provider = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
+  const dialect = pickToolDialect(modelKey, provider);
   const names = [];
   for (const t of tools) {
     if (t?.type !== 'function' || !t.function?.name) continue;
@@ -69,7 +73,18 @@ export function buildToolPreamble(tools) {
   const lowerNames = new Set(names.map(n => n.toLowerCase()));
   if (lowerNames.has('bash')) hints.push('For Bash, put the complete shell command in arguments.command.');
   if (lowerNames.has('read')) hints.push('For Read, put the exact path in arguments.file_path.');
-  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: <tool_call>{"name":"...","arguments":{...}}</tool_call>. ${hints.join(' ')} Otherwise answer directly in plain text. After the last <tool_call>, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
+  // Dialect-aware emission hint — single line so the fallback stays compact
+  // and avoids being mistaken for a Claude Code system prompt by Opus injection
+  // detectors. See injection-guard tests in tool-emulation.test.js.
+  let emit;
+  if (dialect === 'glm47') {
+    emit = `<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`;
+  } else if (dialect === 'kimi_k2') {
+    emit = `<|tool_calls_section_begin|><|tool_call_begin|>NAME:0<|tool_call_argument_begin|>{"k":"v"}<|tool_call_end|><|tool_calls_section_end|>`;
+  } else {
+    emit = `<tool_call>{"name":"...","arguments":{...}}</tool_call>`;
+  }
+  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: ${emit}. ${hints.join(' ')} Otherwise answer directly in plain text. After the last call, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
 }
 
 /**
@@ -81,7 +96,33 @@ export function buildToolPreamble(tools) {
  * model treats the tool definitions as first-class, not as a "user hint"
  * that the baked-in system prompt can override.
  */
-const TOOL_PROTOCOL_SYSTEM_HEADER = `You have access to the following functions. To invoke a function, emit a block in this EXACT format:
+function getToolProtocolHeader(dialect) {
+  const headers = {
+    glm47: `You have access to the following functions. To invoke, emit:
+
+<tool_call>FUNCTION_NAME
+<arg_key>parameter_name</arg_key>
+<arg_value>parameter_value</arg_value>
+</tool_call>
+
+Rules:
+1. Use one <arg_key>/<arg_value> pair per parameter.
+2. Multiple <tool_call> blocks are allowed in parallel.
+3. After all tool calls, STOP generating.
+`,
+    kimi_k2: `You have access to the following functions. Use the native kimi_k2 tool-call format used by vLLM parser:
+
+<|tool_calls_section_begin|>
+<|tool_call_begin|>FUNCTION_NAME:INDEX<|tool_call_argument_begin|>{"arg":"value",...}<|tool_call_end|>
+...
+<|tool_calls_section_end|>
+
+Rules:
+1. Emit only native section tokens, do not emit JSON/XML tool-call tags.
+2. You MAY emit multiple function calls inside the section.
+3. After emitting the last tool call, STOP generating.
+`,
+    openai_json_xml: `You have access to the following functions. To invoke a function, emit a block in this EXACT format:
 
 <tool_call>{"name":"<function_name>","arguments":{...}}</tool_call>
 
@@ -90,7 +131,39 @@ Rules:
 2. "arguments" must be a JSON object matching the function's parameter schema.
 3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
 4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
-5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.`;
+5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.`,
+  };
+  return headers[dialect] || headers.openai_json_xml;
+}
+
+export function pickToolDialect(modelKey, provider) {
+  const normalizedProvider = String(provider || '').toLowerCase();
+  const normalizedModelKey = String(modelKey || '').toLowerCase();
+  if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) return 'glm47';
+  if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) return 'kimi_k2';
+  return 'openai_json_xml';
+}
+
+// Serialize a stored tool_call back into the dialect the model originally
+// emitted, so model.see(history) matches model.emit(now). See issue #86
+// "上下文会丢" for the user-visible symptom of the OpenAI-JSON-XML serializer
+// being used unconditionally for GLM/Kimi history.
+function formatAssistantToolCallForDialect(name, parsedArgs, dialect, _id) {
+  if (dialect === 'glm47') {
+    const argEntries = Object.entries(parsedArgs && typeof parsedArgs === 'object' ? parsedArgs : {});
+    if (argEntries.length === 0) return `<tool_call>${name}</tool_call>`;
+    const argLines = argEntries.map(([k, v]) => {
+      const text = typeof v === 'string' ? v : JSON.stringify(v);
+      return `<arg_key>${k}</arg_key>\n<arg_value>${text}</arg_value>`;
+    }).join('\n');
+    return `<tool_call>${name}\n${argLines}\n</tool_call>`;
+  }
+  if (dialect === 'kimi_k2') {
+    const argsJson = JSON.stringify(parsedArgs ?? {});
+    return `<|tool_calls_section_begin|><|tool_call_begin|>${name}:0<|tool_call_argument_begin|>${argsJson}<|tool_call_end|><|tool_calls_section_end|>`;
+  }
+  return `<tool_call>${JSON.stringify({ name, arguments: parsedArgs })}</tool_call>`;
+}
 
 // Behaviour suffix appended after the base rules, controlled by tool_choice.
 const TOOL_CHOICE_SUFFIX = {
@@ -104,6 +177,27 @@ const TOOL_CHOICE_SUFFIX = {
   none: `
 6. Do NOT call any functions. Answer the user's question directly in plain text.`,
 };
+
+function protocolHeaderForTools(dialect, toolChoice, forceName = null, isPreamble = false) {
+  const header = getToolProtocolHeader(dialect);
+  const lines = [header];
+  lines.push(TOOL_CHOICE_SUFFIX[toolChoice] || TOOL_CHOICE_SUFFIX.auto);
+  if (forceName) {
+    if (isPreamble) {
+      lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
+    } else {
+      lines.push(`6. You MUST call the function "${forceName}". No other function and no direct answer.`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function formatToolCallRuleLines(toolChoice, forceName, dialect) {
+  return protocolHeaderForTools(dialect, toolChoice, forceName, true)
+    .trim()
+    .split('\n')
+    .filter(Boolean);
+}
 
 function lowerToolName(t) {
   return String(t?.function?.name || '').trim().toLowerCase();
@@ -155,9 +249,11 @@ function resolveToolChoice(tc) {
  * X, not /tmp/windsurf-workspace" in a way that survives Cascade's
  * authoritative workspace prior. (#54 follow-up.)
  */
-export function buildToolPreambleForProto(tools, toolChoice, environment) {
+export function buildToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
+  const dialect = pickToolDialect(modelKey, provider);
+  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
 
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
@@ -167,12 +263,7 @@ export function buildToolPreambleForProto(tools, toolChoice, environment) {
     lines.push(environment.trim());
     lines.push('');
   }
-  lines.push(TOOL_PROTOCOL_SYSTEM_HEADER);
-  // Append the appropriate behaviour suffix
-  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
-  if (forceName) {
-    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
-  }
+  lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -273,9 +364,11 @@ function paramSignature(parameters) {
  * Schema-compact preamble: same shape as full, but strips schema docs and
  * minifies JSON. Saves ~40-60% with no loss of tool-call correctness.
  */
-export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment) {
+export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
+  const dialect = pickToolDialect(modelKey, provider);
+  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
     lines.push('## Environment facts');
@@ -284,11 +377,7 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
     lines.push(environment.trim());
     lines.push('');
   }
-  lines.push(TOOL_PROTOCOL_SYSTEM_HEADER);
-  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
-  if (forceName) {
-    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
-  }
+  lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -316,20 +405,18 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
  * stop before names-only — keeps enough for the model to know which
  * params each tool needs without paying the schema serialization cost.
  */
-export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment) {
+export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
+  const dialect = pickToolDialect(modelKey, provider);
+  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
     lines.push('## Environment facts');
     lines.push(environment.trim());
     lines.push('');
   }
-  lines.push(TOOL_PROTOCOL_SYSTEM_HEADER);
-  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
-  if (forceName) {
-    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
-  }
+  lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -363,9 +450,11 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment) 
  * because the alternative is the request failing with panel_state_missing
  * retries until the proxy gives up.
  */
-export function buildCompactToolPreambleForProto(tools, toolChoice, environment) {
+export function buildCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
+  const dialect = pickToolDialect(modelKey, provider);
+  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const names = [];
   for (const t of tools) {
     if (t?.type !== 'function' || !t.function?.name) continue;
@@ -381,11 +470,7 @@ export function buildCompactToolPreambleForProto(tools, toolChoice, environment)
     lines.push(environment.trim());
     lines.push('');
   }
-  lines.push(TOOL_PROTOCOL_SYSTEM_HEADER);
-  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
-  if (forceName) {
-    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
-  }
+  lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -459,6 +544,9 @@ function prependPreambleToContent(content, preamble) {
 export function normalizeMessagesForCascade(messages, tools, options = {}) {
   if (!Array.isArray(messages)) return messages;
   const injectUserPreamble = options.injectUserPreamble !== false;
+  const modelKey = options.modelKey || null;
+  const provider = options.provider || null;
+  const dialect = pickToolDialect(modelKey, provider);
   const out = [];
 
   for (const m of messages) {
@@ -479,11 +567,16 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
     if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
       const parts = [];
       if (m.content) parts.push(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+      // Serialize past tool_calls back into the cascade history using the
+      // dialect the model itself emits — otherwise GLM/Kimi see their own
+      // prior calls in a foreign format and the conversation loses
+      // continuity (issue #86 "上下文会丢"). Default JSON-XML still applies
+      // for OpenAI/Anthropic/Gemini-style models.
       for (const tc of m.tool_calls) {
         const name = tc.function?.name || 'unknown';
         const args = tc.function?.arguments;
         const parsed = typeof args === 'string' ? (safeParseJson(args) ?? {}) : (args ?? {});
-        parts.push(`<tool_call>${JSON.stringify({ name, arguments: parsed })}</tool_call>`);
+        parts.push(formatAssistantToolCallForDialect(name, parsed, dialect, tc.id));
       }
       out.push({ role: 'assistant', content: parts.join('\n') });
       continue;
@@ -507,7 +600,7 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
   // confused prose with zero tool_calls and hit max_wait. Skipping the
   // preamble on tool_result turns lets Opus stay in tool-using mode for
   // the full conversation, matching native-Anthropic-API behaviour.
-  const preamble = buildToolPreamble(tools);
+  const preamble = buildToolPreamble(tools, 'auto', modelKey, provider);
   if (preamble && injectUserPreamble) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role !== 'user') continue;
@@ -539,6 +632,148 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
  */
 const TOOL_PARSE_MODE = process.env.TOOL_PARSE_MODE || 'auto';
 const TOOL_XML_BODY_MAX = 65_536;
+const GLM47_TOOL_OPEN = '<tool_call>';
+const GLM47_TOOL_CLOSE = '</tool_call>';
+const KIMI_TOOL_SECTION_BEGIN = '<|tool_calls_section_begin|>';
+const KIMI_TOOL_SECTION_END = '<|tool_calls_section_end|>';
+const KIMI_TOOL_CALL_BEGIN = '<|tool_call_begin|>';
+const KIMI_TOOL_CALL_ARG = '<|tool_call_argument_begin|>';
+const KIMI_TOOL_CALL_END = '<|tool_call_end|>';
+const GLM47_ARG_KEY_OPEN = '<arg_key>';
+const GLM47_ARG_KEY_CLOSE = '</arg_key>';
+const GLM47_ARG_VALUE_OPEN = '<arg_value>';
+const GLM47_ARG_VALUE_CLOSE = '</arg_value>';
+
+function parseGlm47ToolCallBody(body) {
+  if (typeof body !== 'string') return null;
+  const raw = body.trim();
+  if (!raw) return null;
+
+  const openArg = raw.indexOf(GLM47_ARG_KEY_OPEN);
+  const functionName = (openArg === -1 ? raw : raw.slice(0, openArg)).trim();
+  if (!functionName) return null;
+
+  const args = {};
+  if (openArg === -1) {
+    return { name: functionName, arguments: args };
+  }
+
+  let cursor = openArg;
+  while (true) {
+    const argKeyOpen = raw.indexOf(GLM47_ARG_KEY_OPEN, cursor);
+    if (argKeyOpen === -1) break;
+    const argKeyClose = raw.indexOf(GLM47_ARG_KEY_CLOSE, argKeyOpen + GLM47_ARG_KEY_OPEN.length);
+    if (argKeyClose === -1) break;
+
+    const key = raw.slice(argKeyOpen + GLM47_ARG_KEY_OPEN.length, argKeyClose).trim();
+    if (!key) {
+      cursor = argKeyClose + GLM47_ARG_KEY_CLOSE.length;
+      continue;
+    }
+
+    const argValueOpen = raw.indexOf(GLM47_ARG_VALUE_OPEN, argKeyClose + GLM47_ARG_KEY_CLOSE.length);
+    if (argValueOpen === -1) break;
+    const argValueClose = raw.indexOf(GLM47_ARG_VALUE_CLOSE, argValueOpen + GLM47_ARG_VALUE_OPEN.length);
+    if (argValueClose === -1) break;
+
+    const rawValue = raw.slice(argValueOpen + GLM47_ARG_VALUE_OPEN.length, argValueClose).trim();
+    const parsed = safeParseJson(rawValue);
+    args[key] = parsed === null ? rawValue : parsed;
+
+    cursor = argValueClose + GLM47_ARG_VALUE_CLOSE.length;
+  }
+
+  return { name: functionName, arguments: args };
+}
+
+function parseKimiToolCall(nameWithIndex, argsRaw) {
+  if (typeof nameWithIndex !== 'string') return null;
+  const parsedName = nameWithIndex.trim().split(':')[0].replace(/^functions\./i, '').trim();
+  if (!parsedName) return null;
+  const parsedArgs = safeParseJson((argsRaw || '').trim());
+  if (!parsedArgs || typeof parsedArgs !== 'object') return null;
+  return { name: parsedName, arguments: parsedArgs, suffix: nameWithIndex.includes(':') ? `_${nameWithIndex.split(':').pop().trim()}` : '' };
+}
+
+function parseNonOpenAIDialectBuffer(dialect, body, startSeen) {
+  if (dialect === 'kimi_k2') {
+    let cursor = 0;
+    let outText = '';
+    const calls = [];
+    while (true) {
+      const sectionStart = body.indexOf(KIMI_TOOL_SECTION_BEGIN, cursor);
+      if (sectionStart === -1) {
+        outText += body.slice(cursor);
+        break;
+      }
+      outText += body.slice(cursor, sectionStart);
+      const sectionPayloadStart = sectionStart + KIMI_TOOL_SECTION_BEGIN.length;
+      const sectionEnd = body.indexOf(KIMI_TOOL_SECTION_END, sectionPayloadStart);
+      if (sectionEnd === -1) {
+        // No complete section; keep the tail as-is so no tool-call text leaks.
+        outText += body.slice(sectionPayloadStart - KIMI_TOOL_SECTION_BEGIN.length);
+        break;
+      }
+      const sectionText = body.slice(sectionPayloadStart, sectionEnd);
+      const beginToken = KIMI_TOOL_CALL_BEGIN;
+      const argToken = KIMI_TOOL_CALL_ARG;
+      const endToken = KIMI_TOOL_CALL_END;
+      let callCursor = 0;
+      while (true) {
+        const begin = sectionText.indexOf(beginToken, callCursor);
+        if (begin === -1) break;
+        const arg = sectionText.indexOf(argToken, begin + beginToken.length);
+        if (arg === -1) break;
+        const nameWithIndex = sectionText.slice(begin + beginToken.length, arg).trim();
+        const end = sectionText.indexOf(endToken, arg + argToken.length);
+        if (end === -1) break;
+        const argsText = sectionText.slice(arg + argToken.length, end).trim();
+        const parsed = parseKimiToolCall(nameWithIndex, argsText);
+        if (parsed) {
+          calls.push({
+            id: `call_${startSeen + calls.length}_${Date.now().toString(36)}${parsed.suffix}`,
+            name: parsed.name,
+            argumentsJson: JSON.stringify(parsed.arguments || {}),
+          });
+        }
+        callCursor = end + endToken.length;
+      }
+      cursor = sectionEnd + KIMI_TOOL_SECTION_END.length;
+    }
+    return { text: outText, toolCalls: calls };
+  }
+
+  if (dialect === 'glm47') {
+    const re = new RegExp(
+      `${GLM47_TOOL_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\s\\S]*?)${GLM47_TOOL_CLOSE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+      'g'
+    );
+    const calls = [];
+    const keep = [];
+    let last = 0;
+    let match;
+    let i = 0;
+    while ((match = re.exec(body)) !== null) {
+      keep.push(body.slice(last, match.index));
+      const parsed = parseGlm47ToolCallBody(match[1]);
+      if (parsed?.name) {
+        calls.push({
+          id: `call_${startSeen + i}_${Date.now().toString(36)}`,
+          name: parsed.name,
+          argumentsJson: JSON.stringify(parsed.arguments || {}),
+        });
+        i += 1;
+      } else {
+        keep.push(match[0]);
+      }
+      last = match.index + match[0].length;
+    }
+    keep.push(body.slice(last));
+    return { text: keep.join(''), toolCalls: calls };
+  }
+
+  return { text: body, toolCalls: [] };
+}
 
 export class ToolCallStreamParser {
   constructor(options = {}) {
@@ -550,6 +785,7 @@ export class ToolCallStreamParser {
     this._totalSeen = 0;
     this.parseToolCode = options.parseToolCode !== false;
     this.parseBareJson = options.parseBareJson !== false;
+    this.dialect = options.dialect || pickToolDialect(options.modelKey, options.provider);
   }
 
   _findClosingBrace() {
@@ -621,6 +857,46 @@ export class ToolCallStreamParser {
 
   feed(delta) {
     if (!delta) return { text: '', toolCalls: [], items: [] };
+    if (this.dialect !== 'openai_json_xml') {
+      this.buffer += delta;
+      // Stream text up to the first tool-tag sentinel so plain prose
+      // turns don't sit silent until end-of-stream. Hold back enough tail
+      // to detect a partial open tag split across chunks.
+      const sentinels = this.dialect === 'glm47'
+        ? ['<tool_call>']
+        : ['<|tool_calls_section_begin|>'];
+      let earliest = -1;
+      for (const s of sentinels) {
+        const idx = this.buffer.indexOf(s);
+        if (idx !== -1 && (earliest === -1 || idx < earliest)) earliest = idx;
+      }
+      if (earliest === -1) {
+        let holdLen = 0;
+        for (const s of sentinels) {
+          const max = Math.min(s.length - 1, this.buffer.length);
+          for (let len = max; len > 0; len--) {
+            if (this.buffer.endsWith(s.slice(0, len))) {
+              holdLen = Math.max(holdLen, len);
+              break;
+            }
+          }
+        }
+        const emitUpto = this.buffer.length - holdLen;
+        if (emitUpto > 0) {
+          const text = this.buffer.slice(0, emitUpto);
+          this.buffer = this.buffer.slice(emitUpto);
+          return { text, toolCalls: [], items: [{ type: 'text', text }] };
+        }
+        return { text: '', toolCalls: [], items: [] };
+      }
+      // Sentinel seen — emit any text BEFORE it, hold the rest until flush.
+      if (earliest > 0) {
+        const text = this.buffer.slice(0, earliest);
+        this.buffer = this.buffer.slice(earliest);
+        return { text, toolCalls: [], items: [{ type: 'text', text }] };
+      }
+      return { text: '', toolCalls: [], items: [] };
+    }
     this.buffer += delta;
     const safeParts = [];
     const doneCalls = [];
@@ -636,8 +912,8 @@ export class ToolCallStreamParser {
       items.push({ type: 'tool_call', toolCall });
       this._totalSeen++;
     };
-    const TC_OPEN = '<tool_call>';
-    const TC_CLOSE = '</tool_call>';
+    const TC_OPEN = GLM47_TOOL_OPEN;
+    const TC_CLOSE = GLM47_TOOL_CLOSE;
     const TR_PREFIX = '<tool_result';
     const TR_CLOSE = '</tool_result>';
     const TC_CODE = '{"tool_code"';
@@ -770,6 +1046,19 @@ export class ToolCallStreamParser {
   }
 
   flush() {
+    if (this.dialect !== 'openai_json_xml') {
+      const parsed = parseNonOpenAIDialectBuffer(this.dialect, this.buffer, this._totalSeen);
+      this.buffer = '';
+      const cleanedToolCalls = parsed.toolCalls;
+      for (let i = 0; i < cleanedToolCalls.length; i++) {
+        const tc = cleanedToolCalls[i];
+        if (!tc.id || tc.id.includes('undefined')) {
+          tc.id = `call_${this._totalSeen + i}_${Date.now().toString(36)}`;
+        }
+      }
+      this._totalSeen += cleanedToolCalls.length;
+      return { text: parsed.text, toolCalls: cleanedToolCalls };
+    }
     const remaining = this.buffer;
     this.buffer = '';
     if (this.inToolCall) {
@@ -827,8 +1116,8 @@ export class ToolCallStreamParser {
  * Run a complete (non-streamed) text through the parser in one shot.
  * Convenience wrapper for the non-stream response path.
  */
-export function parseToolCallsFromText(text) {
-  const parser = new ToolCallStreamParser();
+export function parseToolCallsFromText(text, options = {}) {
+  const parser = new ToolCallStreamParser(options);
   const a = parser.feed(text);
   const b = parser.flush();
   return {

@@ -693,6 +693,8 @@ function cachedUsage(messages, completionText) {
 }
 
 export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
+  const modelKey = opts.modelKey || null;
+  const provider = opts.provider || null;
   const softBytes = opts.softBytes ?? parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
   const hardBytes = opts.hardBytes ?? parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
   const tiers = [
@@ -701,7 +703,7 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
     { tier: 'skinny', build: buildSkinnyToolPreambleForProto },
     { tier: 'names-only', build: buildCompactToolPreambleForProto },
   ];
-  const full = tiers[0].build(tools || [], toolChoice, callerEnv);
+  const full = tiers[0].build(tools || [], toolChoice, callerEnv, modelKey, provider);
   if (!full) {
     return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, tier: 'empty', softBytes, hardBytes };
   }
@@ -712,7 +714,7 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
   // names-only and let the hard-cap check decide whether to reject.
   let chosen = { tier: 'full', preamble: full, bytes: fullBytes };
   for (const t of tiers) {
-    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv);
+    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv, modelKey, provider);
     const bytes = Buffer.byteLength(text, 'utf8');
     chosen = { tier: t.tier, preamble: text, bytes };
     if (bytes <= softBytes) break;
@@ -982,7 +984,10 @@ export async function handleChatCompletions(body, context = {}) {
   // hard cap; v2.0.9 rejected on the full-schema size before compacting,
   // which broke real opencode / Claude Code setups with 30-50 MCP tools.
   if (emulateTools) {
-    const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv);
+    const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv, {
+      modelKey: routingModelKey,
+      provider: modelInfo?.provider || null,
+    });
     preambleTier = budget.tier;
     if (budget.compacted) {
       log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
@@ -1031,7 +1036,11 @@ export async function handleChatCompletions(body, context = {}) {
     log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.x multimodal turn`);
   }
   let cascadeMessages = emulateTools
-    ? normalizeMessagesForCascade(messages, tools, { injectUserPreamble: !disableUserToolFallback })
+    ? normalizeMessagesForCascade(messages, tools, {
+      injectUserPreamble: !disableUserToolFallback,
+      modelKey: routingModelKey,
+      provider: modelInfo?.provider || null,
+    })
     : [...messages];
 
   // Note: previous versions injected (a) a CJK language-following hint into
@@ -1095,7 +1104,24 @@ export async function handleChatCompletions(body, context = {}) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey, {
+    return streamResponse(
+      chatId,
+      created,
+      displayModel,
+      routingModelKey,
+      modelInfo?.provider || null,
+      messages,
+      cascadeMessages,
+      modelEnum,
+      modelUid,
+      useCascade,
+      ckey,
+      emulateTools,
+      toolPreamble,
+      reqId,
+      wantJson,
+      callerKey,
+      {
       checkMessageRateLimit: checkMessageRateLimitFn,
       waitForAccount: waitForAccountFn,
       cachePolicy,
@@ -1278,6 +1304,7 @@ export async function handleChatCompletions(body, context = {}) {
       client, chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
+      modelInfo?.provider || null,
       emulateTools, toolPreamble, wantJson, cachePolicy,
     );
     if (result.status === 200) return result;
@@ -1380,7 +1407,7 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools, toolPreamble, wantJson = false, cachePolicy = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -1406,7 +1433,10 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       };
       serverUsage = chunks.usage || null;
       if (emulateTools) {
-        const parsed = parseToolCallsFromText(allText);
+        const parsed = parseToolCallsFromText(allText, {
+          modelKey,
+          provider,
+        });
         allText = parsed.text;
         toolCalls = parsed.toolCalls;
       } else {
@@ -1564,7 +1594,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
   }
 }
 
-function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '', deps = {}) {
+function streamResponse(id, created, model, modelKey, provider, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '', deps = {}) {
   const checkMessageRateLimitFn = deps.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = deps.waitForAccount || waitForAccount;
   // Cache policy threads through deps because streamResponse is a top-level
@@ -1691,7 +1721,12 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       // e.g. a half-read `<tool_call>` tag — can't corrupt the next
       // account's stream. `let` bindings so the retry loop below can
       // reassign.
-      let toolParser = useCascade ? new ToolCallStreamParser({ parseBareJson: emulateTools, parseToolCode: emulateTools }) : null;
+      let toolParser = useCascade ? new ToolCallStreamParser({
+        parseBareJson: emulateTools,
+        parseToolCode: emulateTools,
+        modelKey,
+        provider,
+      }) : null;
       const collectedToolCalls = [];
 
       // Streaming path sanitizers. Every text/thinking delta flows through a
@@ -1792,7 +1827,14 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           // retry. Skip on attempt 0 — already fresh. hadSuccess=true
           // means we already emitted content so no retry happens anyway.
           if (attempt > 0 && !hadSuccess) {
-            if (useCascade) toolParser = new ToolCallStreamParser({ parseBareJson: emulateTools, parseToolCode: emulateTools });
+            if (useCascade) {
+              toolParser = new ToolCallStreamParser({
+                parseBareJson: emulateTools,
+                parseToolCode: emulateTools,
+                modelKey,
+                provider,
+              });
+            }
             pathStreamText = new PathSanitizeStream();
             pathStreamThinking = new PathSanitizeStream();
           }
