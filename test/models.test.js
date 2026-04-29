@@ -47,6 +47,36 @@ describe('resolveModel', () => {
   });
 });
 
+describe('resolveModel Opus 4.7 / legacy alias coverage', () => {
+  it('resolves Opus 4.7 aliases to canonical catalog keys', () => {
+    assert.equal(resolveModel('claude-opus-4.7'), 'claude-opus-4-7-medium');
+    assert.equal(resolveModel('claude-opus-4.7-thinking'), 'claude-opus-4-7-medium-thinking');
+    assert.equal(resolveModel('claude-opus-4.7-high-thinking'), 'claude-opus-4-7-high-thinking');
+    assert.equal(resolveModel('claude-Opus-4.7'), 'claude-opus-4-7-medium');
+    assert.equal(resolveModel('CLAUDE-OPUS-4.7'), 'claude-opus-4-7-medium');
+    assert.equal(resolveModel('claude.opus.4.7'), 'claude.opus.4.7');
+  });
+
+  it('documents unsupported bare / separator variants explicitly', () => {
+    assert.equal(resolveModel('claude_opus_4_7'), 'claude_opus_4_7');
+    assert.equal(resolveModel('opus-4.7-xhigh'), 'opus-4.7-xhigh');
+    assert.equal(resolveModel('4.7-medium'), '4.7-medium');
+    assert.equal(resolveModel('opus-4.7-thinking'), 'opus-4.7-thinking');
+  });
+});
+
+describe('reverse-lookup model info coverage', () => {
+  it('resolves kimi-k2-thinking, glm-4.7-fast, and adaptive', () => {
+    const modelKeys = ['kimi-k2-thinking', 'glm-4.7-fast', 'adaptive'];
+    for (const raw of modelKeys) {
+      const resolved = resolveModel(raw);
+      const info = getModelInfo(resolved);
+      assert.ok(info, `missing model info for ${raw}`);
+      assert.equal(info.name, resolved, `info.name mismatch for ${raw}`);
+    }
+  });
+});
+
 describe('getModelInfo', () => {
   it('returns model info for known model', () => {
     const info = getModelInfo('gpt-4o');

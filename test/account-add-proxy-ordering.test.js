@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { configureBindHost, getAccountList, removeAccount } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
+import { getEffectiveProxy, removeProxy } from '../src/dashboard/proxy-config.js';
 
 const originalAllowPrivate = config.allowPrivateProxyHosts;
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
+const createdAccountIds = new Set();
 
 function fakeRes() {
   return {
@@ -28,9 +30,13 @@ afterEach(() => {
   config.apiKey = originalApiKey;
   configureBindHost('127.0.0.1');
   for (const a of getAccountList()) {
-    if (typeof a.label === 'string' && a.label.startsWith('test-proxy-ordering-')) {
+    if (typeof a.email === 'string' && a.email.startsWith('test-proxy-ordering-')) {
       removeAccount(a.id);
     }
+  }
+  for (const id of createdAccountIds) {
+    removeProxy('account', id);
+    createdAccountIds.delete(id);
   }
 });
 
@@ -76,6 +82,93 @@ describe('POST /accounts proxy ordering (regression for PR #90 follow-up)', () =
     assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}: ${res.body}`);
     assert.ok(/PRIVATE|private|local/i.test(res.json().error || ''), `expected private-host error, got ${res.json().error}`);
     assert.deepEqual(after, before, 'no account should be created when private proxy is rejected');
+  });
+
+  it('creates account with valid public proxy and binds account-level proxy', async () => {
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    configureBindHost('127.0.0.1');
+
+    const before = snapshotAccountIds();
+    const label = `test-proxy-ordering-public-${Date.now()}`;
+    const key = `test-key-${Date.now()}`;
+    const proxy = 'http://1.1.1.1:8080';
+    const res = fakeRes();
+    await handleDashboardApi(
+      'POST',
+      '/accounts',
+      { api_key: key, label, proxy },
+      { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
+      res
+    );
+    const after = snapshotAccountIds();
+
+    const body = res.json();
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    assert.equal(body.success, true);
+    assert.equal(after.length, before.length + 1, 'should create exactly one account');
+    const accountId = body.account.id;
+    createdAccountIds.add(accountId);
+    const proxyCfg = getEffectiveProxy(accountId);
+    assert.deepEqual(proxyCfg, {
+      type: 'http',
+      host: '1.1.1.1',
+      port: 8080,
+      username: '',
+      password: '',
+    });
+  });
+
+  it('prefers api_key when api_key + token are both provided', async () => {
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    configureBindHost('127.0.0.1');
+
+    const label = `test-proxy-ordering-both-${Date.now()}`;
+    const key = `test-key-both-${Date.now()}`;
+    const res = fakeRes();
+    await handleDashboardApi(
+      'POST',
+      '/accounts',
+      {
+        api_key: key,
+        token: 'definitely-not-a-valid-token',
+        label,
+        proxy: 'http://1.1.1.1:8080',
+      },
+      { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
+      res
+    );
+
+    const body = res.json();
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    assert.equal(body.success, true);
+    assert.equal(body.account.method, 'api_key', 'api_key should win when both fields are present');
+    createdAccountIds.add(body.account.id);
+  });
+
+  it('returns non-ERR_* proxy validation errors when host validation throws generic errors', async () => {
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    configureBindHost('127.0.0.1');
+
+    const before = snapshotAccountIds();
+    const label = `test-proxy-ordering-non-err-${Date.now()}`;
+    const key = `test-key-non-err-${Date.now()}`;
+    const res = fakeRes();
+    await handleDashboardApi(
+      'POST',
+      '/accounts',
+      { api_key: key, label, proxy: 'http://does-not-exist.invalid:8080' },
+      { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
+      res
+    );
+    const after = snapshotAccountIds();
+    const body = res.json();
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(body.error && !/^ERR_/.test(body.error), `expected non-ERR_* error, got ${body.error}`);
+    assert.deepEqual(after, before);
   });
 
   it('rejects request with no api_key/token before doing any work', async () => {
