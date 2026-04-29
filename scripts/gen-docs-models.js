@@ -66,11 +66,12 @@ if (end === -1) {
   console.error('Could not find closing "];" for MODELS array');
   process.exit(1);
 }
-const before = html.slice(0, start - 2);
-const after = html.slice(end + endMarker.length);
+const lineStart = html.lastIndexOf('\n', start);
+const prefix = lineStart === -1 ? '' : html.slice(0, lineStart + 1);
+const suffix = html.slice(end + endMarker.length);
 const entries = buildEntries();
 const literal = buildArrayLiteral(entries);
-const next = before + '\n' + literal + after;
+const next = `${prefix}${literal}${suffix}`;
 fs.writeFileSync(docsPath, next, 'utf8');
 
 const byProvider = entries.reduce((acc, e) => {
