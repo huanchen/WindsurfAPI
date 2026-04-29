@@ -331,9 +331,14 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   // GET /accounts/import-local — discover Windsurf desktop client credentials
-  // Localhost-only (req.socket.remoteAddress check, not bind host) to prevent
-  // remote callers from reading the host machine's local Windsurf install.
+  // Local-only hardening: must be bound to loopback host and remote socket
+  // must also be loopback, so reverse proxies on public binds cannot
+  // expose local desktop credentials.
   if (subpath === '/accounts/import-local' && method === 'GET') {
+    if (!isLocalBindHost()) {
+      log.warn('local-windsurf import refused: dashboard not bound to loopback host');
+      return json(res, 403, { error: 'ERR_LOCAL_IMPORT_NOT_AVAILABLE_PUBLIC_BIND' });
+    }
     const remote = req?.socket?.remoteAddress;
     if (!isLoopbackAddress(remote)) {
       log.warn(`local-windsurf import refused: non-loopback caller ${remote}`);
