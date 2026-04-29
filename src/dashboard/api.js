@@ -4,6 +4,8 @@
  */
 
 import { config, log } from '../config.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   getAccountList, getAccountCount, addAccountByKey, addAccountByToken,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
@@ -211,6 +213,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const info = await gitStatus();
       return json(res, 200, { ok: true, ...info });
     } catch (err) {
+      if (isSelfUpdateUnavailableError(err)) {
+        return json(res, 200, { ok: false, available: false, reason: err.reason, error: err.code });
+      }
       return json(res, 200, { ok: false, error: err.message });
     }
   }
@@ -268,6 +273,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         restarting: changed,
       });
     } catch (err) {
+      if (isSelfUpdateUnavailableError(err)) {
+        return json(res, 200, { ok: false, available: false, reason: err.reason, error: err.code });
+      }
       return json(res, 200, { ok: false, error: err.message });
     }
   }
@@ -781,10 +789,40 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 // metacharacters in any future argument source are data, not commands.
 // Belt-and-braces with the branch-name regex in /self-update — if a
 // future refactor drops the regex, execFile still denies injection.
-function runGit(args, opts = {}) {
+const SELF_UPDATE_UNAVAILABLE = 'ERR_SELF_UPDATE_UNAVAILABLE';
+let gitExecFileForTest = null;
+
+export function setGitExecFileForTest(execFile) {
+  gitExecFileForTest = execFile;
+}
+
+function makeSelfUpdateUnavailableError() {
+  const err = new Error(SELF_UPDATE_UNAVAILABLE);
+  err.code = SELF_UPDATE_UNAVAILABLE;
+  err.reason = 'docker';
+  return err;
+}
+
+function isSelfUpdateUnavailableError(err) {
+  return err?.code === SELF_UPDATE_UNAVAILABLE || err?.message === SELF_UPDATE_UNAVAILABLE;
+}
+
+function hasGitMetadata(cwd = process.cwd()) {
+  return existsSync(join(cwd, '.git'));
+}
+
+async function getGitExecFile() {
+  if (gitExecFileForTest) return gitExecFileForTest;
+  const { execFile } = await import('node:child_process');
+  return execFile;
+}
+
+export function runGit(args, opts = {}) {
   return new Promise((resolve, reject) => {
-    import('node:child_process').then(({ execFile }) => {
+    if (!hasGitMetadata(opts.cwd)) return reject(makeSelfUpdateUnavailableError());
+    getGitExecFile().then((execFile) => {
       execFile('git', args, { timeout: 30_000, maxBuffer: 1024 * 1024, ...opts }, (err, stdout, stderr) => {
+        if (err?.code === 'ENOENT') return reject(makeSelfUpdateUnavailableError());
         if (err) return reject(new Error((stderr || err.message).toString().slice(0, 500)));
         resolve(stdout.toString());
       });

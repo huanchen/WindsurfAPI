@@ -2573,6 +2573,16 @@ const App = {
   },
 
   // ─── Overview ────────────────────────────────
+  showSelfUpdateUnavailable(status, apply) {
+    status.innerHTML = `
+      <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.selfUpdateUnavailable')}</div>
+      <div class="text-sm text-muted">${I18n.t('status.selfUpdateDockerHint')}</div>`;
+    if (apply) {
+      apply.classList.add('hidden');
+      apply.disabled = true;
+    }
+  },
+
   async checkUpdate() {
     const btn = document.getElementById('btn-check-update');
     const status = document.getElementById('update-status');
@@ -2583,6 +2593,10 @@ const App = {
     try {
       const r = await this.api('GET', '/self-update/check');
       if (!r.ok) {
+        if (r.error === 'ERR_SELF_UPDATE_UNAVAILABLE') {
+          this.showSelfUpdateUnavailable(status, apply);
+          return;
+        }
         if (/not a git repository/i.test(r.error || '')) {
           status.innerHTML = `
             <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.notGitRepo')}</div>
@@ -2590,7 +2604,7 @@ const App = {
           apply.classList.add('hidden');
           return;
         }
-        throw new Error(r.error || I18n.t('error.apiError'));
+        throw new Error(this.translateError(r.error, 'error.apiError'));
       }
       if (r.behind) {
         status.innerHTML = `
@@ -2634,7 +2648,13 @@ const App = {
         }
         r = await this.api('POST', '/self-update', { forceReset: true });
       }
-      if (!r.ok) throw new Error(r.error || I18n.t('error.updateFailed'));
+      if (!r.ok) {
+        if (r.error === 'ERR_SELF_UPDATE_UNAVAILABLE') {
+          this.showSelfUpdateUnavailable(status, apply);
+          return;
+        }
+        throw new Error(this.translateError(r.error, 'error.updateFailed'));
+      }
       if (r.changed) {
         status.innerHTML = `
           <div style="color:var(--success);font-weight:600;margin-bottom:6px">${I18n.t('status.updateComplete', { before: this.esc(r.before), after: this.esc(r.after) })}</div>
