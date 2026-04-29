@@ -23,7 +23,12 @@
 
 import { log } from '../config.js';
 
-const WORKSPACE_PATH_HINT = "Your sandbox workspace path is hidden from the user; if asked for path/cwd, say real path unavailable; use relative/tool paths.";
+// "<workspace>" you may see is a redaction marker, NOT a literal path.
+// Issue #98 (nalayahfowlkest-ship-it): `find <workspace> -type f` was
+// parsed as shell input redirection ("< workspace") and died with
+// "workspace: No such file or directory". The hint must explicitly
+// forbid passing the literal token to shell tools.
+const WORKSPACE_PATH_HINT = 'Workspace path hidden; "<workspace>" is a redaction marker, NOT a path — never pass it to shell tools (shell reads "<" as redirection). Use "." for cwd or relative paths. If asked for cwd, say unavailable.';
 
 // User-message-level fallback preamble.
 //

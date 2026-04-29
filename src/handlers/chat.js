@@ -449,12 +449,18 @@ export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allo
 // Reasoning models (caller asked for thinking, OR routing landed on a
 // -thinking variant) keep the original split behaviour — those clients
 // expect reasoning_content separately.
-export function shouldFallbackThinkingToText({ routingModelKey, body, accText, accThinking, hasToolCalls }) {
+// `wantThinking` collapses the prior `body` arg — callers compute it via
+// isThinkingRequested(body) at the entry point (handleChatCompletions),
+// then thread the boolean through deps. The previous shape leaked a
+// reference to `body` into streamResponse / nonStreamResponse where it
+// wasn't in scope, ReferenceError'ing every stream finish (#93 follow-up
+// reported by zhangzhang-bit).
+export function shouldFallbackThinkingToText({ routingModelKey, wantThinking, accText, accThinking, hasToolCalls }) {
   if (hasToolCalls) return false;
   if (accText && accText.length) return false;
   if (!accThinking || !accThinking.length) return false;
   if (routingModelKey && /thinking/i.test(routingModelKey)) return false;
-  if (body && (body.reasoning_effort || (body.thinking && body.thinking.type && body.thinking.type !== 'disabled'))) return false;
+  if (wantThinking) return false;
   return true;
 }
 
@@ -1191,6 +1197,7 @@ export async function handleChatCompletions(body, context = {}) {
       checkMessageRateLimit: checkMessageRateLimitFn,
       waitForAccount: waitForAccountFn,
       cachePolicy,
+      wantThinking,
       fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
     });
   }
@@ -1371,7 +1378,7 @@ export async function handleChatCompletions(body, context = {}) {
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
       modelInfo?.provider || null,
-      emulateTools, toolPreamble, wantJson, cachePolicy,
+      emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -1473,7 +1480,7 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -1538,7 +1545,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // OpenAI-compatible client renders it as `content`, not `reasoning_content`.
     if (shouldFallbackThinkingToText({
       routingModelKey: modelKey,
-      body: null,
+      wantThinking,
       accText: allText,
       accThinking: allThinking,
       hasToolCalls: toolCalls.length > 0,
@@ -2083,14 +2090,18 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             // GLM5.1 silence fallback (#86 follow-up KLFDan0534) — see
             // shouldFallbackThinkingToText comment for rationale.
+            // Inside streamResponse the routing key arrives as the
+            // `modelKey` param (caller passes routingModelKey there);
+            // wantThinking comes through deps because body isn't in
+            // scope here (#93 follow-up zhangzhang-bit).
             if (shouldFallbackThinkingToText({
-              routingModelKey,
-              body,
+              routingModelKey: modelKey,
+              wantThinking: deps.wantThinking,
               accText,
               accThinking,
               hasToolCalls: collectedToolCalls.length > 0,
             })) {
-              log.info(`Chat[${reqId}]: thinking-only stream from non-reasoning model ${routingModelKey}; promoting ${accThinking.length}c thinking → content`);
+              log.info(`Chat[${reqId}]: thinking-only stream from non-reasoning model ${modelKey}; promoting ${accThinking.length}c thinking → content`);
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [{ index: 0, delta: { content: accThinking }, finish_reason: null }] });
               accText = accThinking;

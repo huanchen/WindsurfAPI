@@ -42,9 +42,16 @@ test('all tool preamble builders tell the model the workspace path is hidden', (
   ];
 
   for (const out of outputs) {
+    // Hint must convey: workspace path is hidden, "<workspace>" is a
+    // marker not a literal path. v2.0.36 (#98) made the wording explicit
+    // so the model stops emitting `find <workspace>` style commands.
     assert.ok(
-      out.includes('Your sandbox workspace path is hidden'),
+      /workspace path hidden/i.test(out),
       `missing hidden-workspace hint in preamble: ${out}`
+    );
+    assert.ok(
+      /redaction marker/i.test(out),
+      `preamble must call out that "<workspace>" is a redaction marker (#98 fix): ${out}`
     );
   }
 });
