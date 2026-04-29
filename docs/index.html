@@ -153,6 +153,7 @@ nav .nav-cta:hover{background:var(--coral-deep);color:#fff}
 .model-card[data-provider="qwen"]{--provider-color:#A855F7}
 .model-card[data-provider="moonshot"]{--provider-color:#000}
 .model-card[data-provider="zhipu"]{--provider-color:#3B82F6}
+.model-card[data-provider="minimax"]{--provider-color:#FF6B35}
 .model-card[data-provider="windsurf"]{--provider-color:#6B6556}
 
 /* ── Architecture (dark immersive) ── */
@@ -437,12 +438,12 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
       <button class="filter-btn" data-filter="anthropic">Claude <span class="count" id="count-anthropic">0</span></button>
       <button class="filter-btn" data-filter="openai">GPT <span class="count" id="count-openai">0</span></button>
       <button class="filter-btn" data-filter="google">Gemini <span class="count" id="count-google">0</span></button>
-      <button class="filter-btn" data-filter="deepseek">DeepSeek</button>
-      <button class="filter-btn" data-filter="xai">Grok</button>
-      <button class="filter-btn" data-filter="qwen">Qwen</button>
-      <button class="filter-btn" data-filter="moonshot">Kimi</button>
-      <button class="filter-btn" data-filter="zhipu">GLM</button>
-      <button class="filter-btn" data-filter="windsurf">SWE</button>
+      <button class="filter-btn" data-filter="xai">Grok <span class="count" id="count-xai">0</span></button>
+      <button class="filter-btn" data-filter="qwen">Qwen <span class="count" id="count-qwen">0</span></button>
+      <button class="filter-btn" data-filter="moonshot">Kimi <span class="count" id="count-moonshot">0</span></button>
+      <button class="filter-btn" data-filter="zhipu">GLM <span class="count" id="count-zhipu">0</span></button>
+      <button class="filter-btn" data-filter="minimax">MiniMax <span class="count" id="count-minimax">0</span></button>
+      <button class="filter-btn" data-filter="windsurf">SWE / Arena <span class="count" id="count-windsurf">0</span></button>
       <button class="filter-btn" data-filter="thinking">思考型 <span class="count" id="count-thinking">0</span></button>
       <button class="filter-btn" data-filter="free">免費 <span class="count" id="count-free">0</span></button>
     </div>
@@ -450,8 +451,9 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     <div class="model-grid reveal" id="model-grid"></div>
 
     <div class="note reveal">
-      <strong>免費帳號：</strong>僅支援 <code>gpt-4o-mini</code> 與 <code>gemini-2.5-flash</code>。其餘模型需 Windsurf Pro 訂閱。<br>
-      <strong>看不到最新模型？</strong>你的 Language Server binary 可能落後 Windsurf 雲端，從桌面端拷貝最新版 LS 覆蓋即可——<code>/v1/models</code> 會自動從雲端發現新模型。
+      <strong>免費帳號：</strong>僅支援 <code>gemini-2.5-flash</code>（<code>gpt-4o-mini</code> 已被 Windsurf 下架）。其餘模型需 Windsurf Pro 訂閱。<br>
+      <strong>看不到最新模型？</strong>你的 Language Server binary 可能落後 Windsurf 雲端，從桌面端拷貝最新版 LS 覆蓋即可——<code>/v1/models</code> 會自動從雲端發現新模型。<br>
+      <strong>模型清單怎麼更新？</strong>本頁面上的清單由 <code>scripts/gen-docs-models.js</code> 從 <code>src/models.js</code> 自動生成，不會與後端漂移。
     </div>
   </div>
 </section>
@@ -536,7 +538,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
             </div>
             <div class="arch-nd-label">Upstream</div>
             <div class="arch-nd-title">Windsurf Cloud</div>
-            <div class="arch-nd-sub">Cascade AI 引擎<br>107+ 模型推理</div>
+            <div class="arch-nd-sub">Cascade AI 引擎<br>100+ 模型推理</div>
           </div>
         </div>
       </div>
@@ -641,7 +643,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
             <div class="code-box"><div class="code-box-head"><span class="lang">.env</span><button class="copy-btn" data-copy>複製</button></div>
 <pre><span class="c-key">PORT</span>=<span class="c-str">3003</span>
 <span class="c-key">API_KEY</span>=                   <span class="c-com"># 留空 = 不驗證</span>
-<span class="c-key">DEFAULT_MODEL</span>=<span class="c-str">gpt-4o-mini</span>
+<span class="c-key">DEFAULT_MODEL</span>=<span class="c-str">claude-4.5-sonnet-thinking</span>
 <span class="c-key">LS_BINARY_PATH</span>=<span class="c-str">/opt/windsurf/language_server_linux_x64</span>
 <span class="c-key">DASHBOARD_PASSWORD</span>=         <span class="c-com"># 留空 = 後台免密碼</span></pre>
             </div>
@@ -742,7 +744,7 @@ client = OpenAI(
     <div class="faq-list reveal">
       <details class="faq-item">
         <summary>需要 Windsurf 付費帳號嗎？</summary>
-        <div class="a">免費帳號可以跑，但僅限 <code>gpt-4o-mini</code> 和 <code>gemini-2.5-flash</code>。Claude、GPT-5 全系、Gemini 3 等都需要 Windsurf Pro 訂閱。後台會自動偵測並標記每個帳號的 tier。</div>
+        <div class="a">免費帳號可以跑，但僅限 <code>gemini-2.5-flash</code>（<code>gpt-4o-mini</code> 已下架）。Claude、GPT-5 全系、Gemini 3、GLM 5.x、Kimi K2.x 等都需要 Windsurf Pro 訂閱。後台會自動偵測並標記每個帳號的 tier。</div>
       </details>
       <details class="faq-item">
         <summary>可以 Windows 上跑嗎？</summary>
@@ -915,6 +917,9 @@ client = OpenAI(
 <script>
 /* ── Models ── */
 (function(){
+
+
+
   const MODELS = [
     {k:'claude-3.5-sonnet',p:'anthropic',c:2},
     {k:'claude-3.7-sonnet',p:'anthropic',c:2},
@@ -936,16 +941,18 @@ client = OpenAI(
     {k:'claude-sonnet-4.6-thinking-1m',p:'anthropic',c:16,thinking:1},
     {k:'claude-opus-4.6',p:'anthropic',c:6},
     {k:'claude-opus-4.6-thinking',p:'anthropic',c:8,thinking:1},
-    {k:'claude-code',p:'anthropic',c:2},
+    {k:'claude-opus-4-7-medium',p:'anthropic',c:8},
+    {k:'claude-opus-4-7-low',p:'anthropic',c:6},
+    {k:'claude-opus-4-7-high',p:'anthropic',c:10},
+    {k:'claude-opus-4-7-xhigh',p:'anthropic',c:12},
+    {k:'claude-opus-4-7-medium-thinking',p:'anthropic',c:10,thinking:1},
+    {k:'claude-opus-4-7-high-thinking',p:'anthropic',c:12,thinking:1},
+    {k:'claude-opus-4-7-xhigh-thinking',p:'anthropic',c:16,thinking:1},
     {k:'gpt-4o',p:'openai',c:1},
-    {k:'gpt-4o-mini',p:'openai',c:0.5,free:1},
     {k:'gpt-4.1',p:'openai',c:1},
-    {k:'gpt-4.1-mini',p:'openai',c:0.5},
-    {k:'gpt-4.1-nano',p:'openai',c:0.25},
     {k:'gpt-5',p:'openai',c:0.5},
     {k:'gpt-5-medium',p:'openai',c:1},
     {k:'gpt-5-high',p:'openai',c:2},
-    {k:'gpt-5-mini',p:'openai',c:0.25},
     {k:'gpt-5-codex',p:'openai',c:0.5},
     {k:'gpt-5.1',p:'openai',c:0.5},
     {k:'gpt-5.1-low',p:'openai',c:0.5},
@@ -958,50 +965,78 @@ client = OpenAI(
     {k:'gpt-5.1-codex-low',p:'openai',c:0.5},
     {k:'gpt-5.1-codex-medium',p:'openai',c:1},
     {k:'gpt-5.1-codex-mini-low',p:'openai',c:0.25},
-    {k:'gpt-5.1-codex-high',p:'openai',c:2},
-    {k:'gpt-5.1-codex-fast',p:'openai',c:1},
-    {k:'gpt-5.2',p:'openai',c:1},
-    {k:'gpt-5.2-medium',p:'openai',c:1},
-    {k:'gpt-5.2-high',p:'openai',c:2},
-    {k:'o3',p:'openai',c:5,thinking:1},
-    {k:'o3-mini',p:'openai',c:2,thinking:1},
-    {k:'o3-pro',p:'openai',c:10,thinking:1},
-    {k:'o4-mini',p:'openai',c:2,thinking:1},
-    {k:'gemini-2.5-pro',p:'google',c:2},
-    {k:'gemini-2.5-flash',p:'google',c:0.25,free:1},
-    {k:'gemini-2.5-flash-thinking',p:'google',c:0.5,thinking:1},
-    {k:'gemini-3.0-pro',p:'google',c:4,thinking:1},
+    {k:'gpt-5.1-codex-mini',p:'openai',c:0.5},
+    {k:'gpt-5.1-codex-max-low',p:'openai',c:1},
+    {k:'gpt-5.1-codex-max-medium',p:'openai',c:1.25},
+    {k:'gpt-5.1-codex-max-high',p:'openai',c:1.5},
+    {k:'gpt-5.2',p:'openai',c:2},
+    {k:'gpt-5.2-none',p:'openai',c:1},
+    {k:'gpt-5.2-low',p:'openai',c:1},
+    {k:'gpt-5.2-high',p:'openai',c:3},
+    {k:'gpt-5.2-xhigh',p:'openai',c:8},
+    {k:'gpt-5.2-none-fast',p:'openai',c:2},
+    {k:'gpt-5.2-low-fast',p:'openai',c:2},
+    {k:'gpt-5.2-medium-fast',p:'openai',c:4},
+    {k:'gpt-5.2-high-fast',p:'openai',c:6},
+    {k:'gpt-5.2-xhigh-fast',p:'openai',c:16},
+    {k:'gpt-5.2-codex-low',p:'openai',c:1},
+    {k:'gpt-5.2-codex-medium',p:'openai',c:1},
+    {k:'gpt-5.2-codex-high',p:'openai',c:2},
+    {k:'gpt-5.2-codex-xhigh',p:'openai',c:3},
+    {k:'gpt-5.2-codex-low-fast',p:'openai',c:2},
+    {k:'gpt-5.2-codex-medium-fast',p:'openai',c:2},
+    {k:'gpt-5.2-codex-high-fast',p:'openai',c:4},
+    {k:'gpt-5.2-codex-xhigh-fast',p:'openai',c:6},
+    {k:'gpt-5.3-codex',p:'openai',c:1},
+    {k:'gpt-5.4-none',p:'openai',c:0.5},
+    {k:'gpt-5.4-low',p:'openai',c:1},
+    {k:'gpt-5.4-medium',p:'openai',c:2},
+    {k:'gpt-5.4-high',p:'openai',c:4},
+    {k:'gpt-5.4-xhigh',p:'openai',c:8},
+    {k:'gpt-5.4-mini-low',p:'openai',c:1.5},
+    {k:'gpt-5.4-mini-medium',p:'openai',c:1.5},
+    {k:'gpt-5.4-mini-high',p:'openai',c:4.5},
+    {k:'gpt-5.4-mini-xhigh',p:'openai',c:12},
+    {k:'gpt-oss-120b',p:'openai',c:0.25},
+    {k:'o3-mini',p:'openai',c:0.5},
+    {k:'o3',p:'openai',c:1},
+    {k:'o3-high',p:'openai',c:1},
+    {k:'o3-pro',p:'openai',c:4},
+    {k:'o4-mini',p:'openai',c:0.5},
+    {k:'gemini-2.5-pro',p:'google',c:1},
+    {k:'gemini-2.5-flash',p:'google',c:0.5,free:1},
+    {k:'gemini-3.0-pro',p:'google',c:1},
+    {k:'gemini-3.0-flash-minimal',p:'google',c:0.75,free:1},
+    {k:'gemini-3.0-flash-low',p:'google',c:1},
     {k:'gemini-3.0-flash',p:'google',c:1},
-    {k:'gemini-3-pro-preview',p:'google',c:4},
-    {k:'deepseek-v3',p:'deepseek',c:0.5},
-    {k:'deepseek-v3.1',p:'deepseek',c:0.5},
-    {k:'deepseek-v3.2',p:'deepseek',c:0.5},
-    {k:'deepseek-r1',p:'deepseek',c:1,thinking:1},
-    {k:'deepseek-r1-0528',p:'deepseek',c:1,thinking:1},
+    {k:'gemini-3.0-flash-high',p:'google',c:1.75},
+    {k:'gemini-3.1-pro-low',p:'google',c:1},
+    {k:'gemini-3.1-pro-high',p:'google',c:2},
     {k:'grok-3',p:'xai',c:1},
-    {k:'grok-3-mini',p:'xai',c:0.5},
-    {k:'grok-4',p:'xai',c:2,thinking:1},
-    {k:'grok-4-fast',p:'xai',c:1},
-    {k:'grok-code-fast',p:'xai',c:1},
-    {k:'qwen-3-235b',p:'qwen',c:0.5},
-    {k:'qwen-3-coder',p:'qwen',c:1},
-    {k:'qwen-3-coder-fast',p:'qwen',c:1},
-    {k:'qwen3-max',p:'qwen',c:1},
-    {k:'kimi-k2',p:'moonshot',c:1},
-    {k:'kimi-k2-0905',p:'moonshot',c:1},
-    {k:'kimi-k2-thinking',p:'moonshot',c:2,thinking:1},
-    {k:'glm-4.5',p:'zhipu',c:0.5},
-    {k:'glm-4.6',p:'zhipu',c:1},
-    {k:'glm-4.6-thinking',p:'zhipu',c:1,thinking:1},
-    {k:'minimax-m2',p:'zhipu',c:1},
-    {k:'swe-1',p:'windsurf',c:0.5},
-    {k:'swe-1-lite',p:'windsurf',c:0.25},
+    {k:'grok-3-mini-thinking',p:'xai',c:0.125,thinking:1},
+    {k:'grok-code-fast-1',p:'xai',c:0.5},
+    {k:'kimi-k2',p:'moonshot',c:0.5},
+    {k:'kimi-k2-thinking',p:'moonshot',c:1,thinking:1},
+    {k:'kimi-k2.5',p:'moonshot',c:1},
+    {k:'kimi-k2-6',p:'moonshot',c:1},
+    {k:'glm-4.7',p:'zhipu',c:0.25,free:1},
+    {k:'glm-4.7-fast',p:'zhipu',c:0.5},
+    {k:'glm-5',p:'zhipu',c:1.5},
+    {k:'glm-5.1',p:'zhipu',c:1.5},
+    {k:'minimax-m2.5',p:'minimax',c:1},
     {k:'swe-1.5',p:'windsurf',c:0.5},
+    {k:'swe-1.5-fast',p:'windsurf',c:0.5,free:1},
+    {k:'swe-1.5-thinking',p:'windsurf',c:0.75,thinking:1},
+    {k:'swe-1.6',p:'windsurf',c:0.5},
+    {k:'swe-1.6-fast',p:'windsurf',c:0.5},
+    {k:'adaptive',p:'windsurf',c:1},
+    {k:'arena-fast',p:'windsurf',c:0.5},
+    {k:'arena-smart',p:'windsurf',c:1},
   ];
 
   const grid = document.getElementById('model-grid');
   if(!grid) return;
-  const providerShort = {anthropic:'Claude',openai:'GPT',google:'Gemini',deepseek:'DeepSeek',xai:'Grok',qwen:'Qwen',moonshot:'Kimi',zhipu:'GLM',windsurf:'SWE'};
+  const providerShort = {anthropic:'Claude',openai:'GPT',google:'Gemini',xai:'Grok',qwen:'Qwen',moonshot:'Kimi',zhipu:'GLM',minimax:'MiniMax',windsurf:'SWE'};
 
   function badge(m){
     if(m.free) return '<span class="model-badge free">免費</span>';
@@ -1021,9 +1056,10 @@ client = OpenAI(
 
   document.getElementById('stat-models').textContent = MODELS.length;
   document.getElementById('count-all').textContent = MODELS.length;
-  document.getElementById('count-anthropic').textContent = MODELS.filter(m=>m.p==='anthropic').length;
-  document.getElementById('count-openai').textContent = MODELS.filter(m=>m.p==='openai').length;
-  document.getElementById('count-google').textContent = MODELS.filter(m=>m.p==='google').length;
+  ['anthropic','openai','google','xai','qwen','moonshot','zhipu','minimax','windsurf'].forEach(p => {
+    const el = document.getElementById('count-'+p);
+    if (el) el.textContent = MODELS.filter(m=>m.p===p).length;
+  });
   document.getElementById('count-thinking').textContent = MODELS.filter(m=>m.thinking).length;
   document.getElementById('count-free').textContent = MODELS.filter(m=>m.free).length;
 

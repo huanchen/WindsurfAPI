@@ -26,7 +26,7 @@ if [ ! -f .env ]; then
 PORT=3003
 API_KEY=
 DATA_DIR=
-DEFAULT_MODEL=gpt-4o-mini
+DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64

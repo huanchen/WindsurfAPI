@@ -21,7 +21,7 @@ Turns [Windsurf](https://windsurf.com) (formerly Codeium)'s AI models into **two
 - `POST /v1/chat/completions` — **OpenAI Compatible** for any OpenAI SDK.
 - `POST /v1/messages` — **Anthropic Compatible** for direct connection with Claude Code / Cline / Cursor.
 
-**107 Models**: Claude Opus / Sonnet · GPT-5 series · Gemini 3.x · DeepSeek · Grok · Qwen · Kimi · GLM, etc. Zero npm dependencies, pure Node.js.
+**100+ Models**: Claude 4.5/4.6/Opus 4.7 · GPT-5/5.1/5.2/5.4 series · Gemini 2.5/3.0/3.1 · Grok · Qwen · Kimi K2.x · GLM 4.7/5/5.1 · MiniMax · SWE 1.5/1.6 · Arena, etc. Zero npm dependencies, pure Node.js.
 
 ## What is it doing?
 
@@ -159,7 +159,7 @@ bash install-ls.sh
 cat > .env << 'EOF'
 PORT=3003
 API_KEY=
-DEFAULT_MODEL=gpt-4o-mini
+DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
@@ -290,37 +290,44 @@ Open `http://YOUR_IP:3003/dashboard`:
 
 ## Supported Models
 
-A total of 107 models. The following are the main categories; the actual list is based on the `/v1/models` response:
+100+ static models in the main catalog plus dynamic cloud-side models added at startup via `mergeCloudModels`. Full list: `GET /v1/models`, or browse the [GitHub Pages model catalog](https://dwgx.github.io/WindsurfAPI/#models) (auto-generated from `src/models.js`).
 
 <details>
-<summary><b>Claude (Anthropic)</b> — 20 models</summary>
+<summary><b>Claude (Anthropic)</b> — 21 models</summary>
 
-claude-3.5-sonnet / 3.7-sonnet / thinking · claude-4-sonnet / opus / thinking · claude-4.1-opus · claude-4.5-haiku / sonnet / opus · claude-sonnet-4.6 (incl. 1m / thinking / thinking-1m) · claude-opus-4.6 / thinking
+claude-3.5-sonnet / 3.7-sonnet / thinking · claude-4-sonnet / opus / thinking · claude-4.1-opus · claude-4.5-haiku / sonnet / opus · claude-sonnet-4.6 (incl. 1m / thinking / thinking-1m) · claude-opus-4.6 / thinking · **claude-opus-4.7-medium**
 
 </details>
 
 <details>
-<summary><b>GPT (OpenAI)</b> — 55+ models</summary>
+<summary><b>GPT (OpenAI)</b> — 55 models</summary>
 
-gpt-4o · gpt-4o-mini · gpt-4.1 / mini / nano · gpt-5 / 5-medium / 5-high / 5-mini · gpt-5.1 series (incl. codex / fast) · gpt-5.2 series (none / low / medium / high / xhigh + fast + codex) · gpt-5.3-codex · gpt-5.4 / 5.4-mini · gpt-oss-120b · o3 / o3-mini / o3-high / o3-pro / o4-mini
+gpt-4o · gpt-4.1 · gpt-5 series (incl. medium / high / codex) · **gpt-5.1 series** (base / low / medium / high + fast + codex, all 6 variants) · **gpt-5.2 series** (none / low / medium / high / xhigh + fast + codex) · **gpt-5.4 series** (base / mini × low/medium/high/xhigh) · o3 series (base / mini / pro) · o4-mini
 
 </details>
 
 <details>
 <summary><b>Gemini (Google)</b> — 9 models</summary>
 
-gemini-2.5-pro / flash · gemini-3.0-pro / flash (incl. minimal / low / high) · gemini-3.1-pro (low / high)
+gemini-2.5-pro / flash · gemini-3.0-pro / flash (minimal / low / medium / high — 4 reasoning levels) · gemini-3.1-pro (low / high)
 
 </details>
 
 <details>
-<summary><b>Others</b></summary>
+<summary><b>Open source / Chinese providers</b></summary>
 
-deepseek-v3 / v3-2 / r1 · grok-3 / mini / mini-thinking / code-fast-1 · qwen-3 / 3-coder · kimi-k2 / k2.5 · glm-4.7 / 5 / 5.1 · minimax-m2.5 · swe-1.5 / 1.6 (incl. fast) · arena-fast / smart
+**Kimi**: kimi-k2 / k2.5 / k2-6 · **GLM**: glm-4.7 / 5 / 5.1 · **Qwen**: qwen-3 · **Grok**: grok-3 / grok-3-mini-thinking / grok-code-fast-1 · **MiniMax**: minimax-m2.5
 
 </details>
 
-> **Free accounts** can only use `gpt-4o-mini` and `gemini-2.5-flash`. Others require Windsurf Pro.
+<details>
+<summary><b>Windsurf in-house + Arena</b></summary>
+
+swe-1.5 / 1.5-fast / 1.6 / 1.6-fast · arena-fast · arena-smart
+
+</details>
+
+> **Free accounts** can only use `gemini-2.5-flash` (`gpt-4o-mini` is deprecated upstream). Others require Windsurf Pro.
 
 ### Language-Following for CJK Users
 
@@ -374,7 +381,7 @@ A: This has been fixed. Cold stall detection is now adaptive to input length, wi
 A: Yes. `export ANTHROPIC_BASE_URL=http://YOUR_API` + `export ANTHROPIC_API_KEY=YOUR_KEY`. `/v1/messages` supports the full suite: system, tools, tool_use, tool_result, stream, and multi-turn, all tested and working.
 
 **Q: What models can free accounts use?**
-A: Only `gpt-4o-mini` and `gemini-2.5-flash`. All others require Pro.
+A: Only `gemini-2.5-flash` (since `gpt-4o-mini` was deprecated upstream). All others require Pro.
 
 ## Contributors
 

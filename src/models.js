@@ -31,7 +31,16 @@ export const MODELS = {
   'claude-sonnet-4.6-thinking-1m':  { name: 'claude-sonnet-4.6-thinking-1m',  provider: 'anthropic', enumValue: 0,   modelUid: 'claude-sonnet-4-6-thinking-1m', credit: 16 },
   'claude-opus-4.6':                { name: 'claude-opus-4.6',                provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-6', credit: 6 },
   'claude-opus-4.6-thinking':       { name: 'claude-opus-4.6-thinking',       provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-6-thinking', credit: 8 },
+  // Claude Opus 4.7 — Windsurf changelog 2026-04-16; new xhigh effort tier vs 4.6.
+  // `medium` is the canonical default; low/high/xhigh/max are reasoning tiers,
+  // each can be paired with -thinking for visible chain-of-thought.
   'claude-opus-4-7-medium':         { name: 'claude-opus-4-7-medium',         provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-medium', credit: 8 },
+  'claude-opus-4-7-low':            { name: 'claude-opus-4-7-low',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-low', credit: 6 },
+  'claude-opus-4-7-high':           { name: 'claude-opus-4-7-high',           provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-high', credit: 10 },
+  'claude-opus-4-7-xhigh':          { name: 'claude-opus-4-7-xhigh',          provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-xhigh', credit: 12 },
+  'claude-opus-4-7-medium-thinking': { name: 'claude-opus-4-7-medium-thinking', provider: 'anthropic', enumValue: 0, modelUid: 'claude-opus-4-7-medium-thinking', credit: 10 },
+  'claude-opus-4-7-high-thinking':  { name: 'claude-opus-4-7-high-thinking',  provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-high-thinking', credit: 12 },
+  'claude-opus-4-7-xhigh-thinking': { name: 'claude-opus-4-7-xhigh-thinking', provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-xhigh-thinking', credit: 16 },
 
   // ── GPT ─────────────────────────────────────────────────
   'gpt-4o':                         { name: 'gpt-4o',                         provider: 'openai', enumValue: 109, modelUid: 'MODEL_CHAT_GPT_4O_2024_08_06', credit: 1 },
@@ -141,22 +150,33 @@ export const MODELS = {
 
   // ── Kimi ────────────────────────────────────────────────
   'kimi-k2':                        { name: 'kimi-k2',                        provider: 'moonshot', enumValue: 323, modelUid: 'MODEL_KIMI_K2', credit: 0.5 },
+  'kimi-k2-thinking':               { name: 'kimi-k2-thinking',               provider: 'moonshot', enumValue: 394, modelUid: 'MODEL_KIMI_K2_THINKING', credit: 1 },
   'kimi-k2.5':                      { name: 'kimi-k2.5',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-5', credit: 1 },
   'kimi-k2-6':                      { name: 'kimi-k2-6',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-6', credit: 1 },
 
   // ── GLM ─────────────────────────────────────────────────
   'glm-4.7':                        { name: 'glm-4.7',                        provider: 'zhipu', enumValue: 417, modelUid: 'MODEL_GLM_4_7', credit: 0.25 },
+  'glm-4.7-fast':                   { name: 'glm-4.7-fast',                   provider: 'zhipu', enumValue: 418, modelUid: 'MODEL_GLM_4_7_FAST', credit: 0.5 },
   'glm-5':                          { name: 'glm-5',                          provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5', credit: 1.5 },
   'glm-5.1':                        { name: 'glm-5.1',                        provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5-1', credit: 1.5 },
 
   // ── MiniMax ─────────────────────────────────────────────
-  'minimax-m2.5':                   { name: 'minimax-m2.5',                   provider: 'minimax', enumValue: 0,   modelUid: 'minimax-m2-5', credit: 1 },
+  // proto enum 419 = MODEL_MINIMAX_M2_1; the canonical name in cloud configs is m2.5.
+  'minimax-m2.5':                   { name: 'minimax-m2.5',                   provider: 'minimax', enumValue: 419, modelUid: 'MODEL_MINIMAX_M2_1', credit: 1 },
 
   // ── Windsurf SWE ────────────────────────────────────────
-  'swe-1.5':                        { name: 'swe-1.5',                        provider: 'windsurf', enumValue: 369, modelUid: 'MODEL_SWE_1_5_SLOW', credit: 0.5 },
+  // Proto canonical enums: 359=MODEL_SWE_1_5 (fast), 369=THINKING, 377=SLOW, 420=1_6, 421=1_6_FAST.
+  // The default `swe-1.5` UID alias in upstream cloud config maps to the SLOW tier (377).
+  'swe-1.5':                        { name: 'swe-1.5',                        provider: 'windsurf', enumValue: 377, modelUid: 'MODEL_SWE_1_5_SLOW', credit: 0.5 },
   'swe-1.5-fast':                   { name: 'swe-1.5-fast',                   provider: 'windsurf', enumValue: 359, modelUid: 'MODEL_SWE_1_5', credit: 0.5 },
-  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 0,   modelUid: 'swe-1-6', credit: 0.5 },
-  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 0,   modelUid: 'swe-1-6-fast', credit: 0.5 },
+  'swe-1.5-thinking':               { name: 'swe-1.5-thinking',               provider: 'windsurf', enumValue: 369, modelUid: 'MODEL_SWE_1_5_THINKING', credit: 0.75 },
+  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 420, modelUid: 'MODEL_SWE_1_6', credit: 0.5 },
+  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 421, modelUid: 'MODEL_SWE_1_6_FAST', credit: 0.5 },
+
+  // ── Adaptive (Windsurf 2026-04-06 changelog) ────────────
+  // Adaptive Model Router auto-picks model + reasoning tier per turn.
+  // No fixed credit — billing per actual underlying model used.
+  'adaptive':                       { name: 'adaptive',                       provider: 'windsurf', enumValue: 0,   modelUid: 'adaptive', credit: 1 },
 
   // ── Arena ───────────────────────────────────────────────
   'arena-fast':                     { name: 'arena-fast',                     provider: 'windsurf', enumValue: 0,   modelUid: 'arena-fast', credit: 0.5 },
@@ -222,14 +242,20 @@ const ANTHROPIC_DATED = {
   'claude-opus-4-5':            'claude-4.5-opus',
   'claude-opus-4-5-20251101':   'claude-4.5-opus',
 
-  // Anthropic Opus 4.7 — Windsurf currently only exposes `claude-opus-4-7-medium`
-  // via GetCascadeModelConfigs (mergeCloudModels adds it at runtime). Clients like
-  // Claude Code send the bare `claude-opus-4-7`, so resolve every common spelling
-  // to the -medium variant until Windsurf ships other reasoning levels.
+  // Anthropic Opus 4.7 — Windsurf changelog 2026-04-16. Cloud now exposes 4 reasoning
+  // tiers (low/medium/high/xhigh) plus matching -thinking variants. Bare `claude-opus-4-7`
+  // and `claude-opus-4.7` default to medium; `-thinking` suffix routes to medium-thinking.
   'claude-opus-4-7':            'claude-opus-4-7-medium',
   'claude-opus-4-7-latest':     'claude-opus-4-7-medium',
   'claude-opus-4.7':            'claude-opus-4-7-medium',
-  'claude-opus-4.7-thinking':   'claude-opus-4-7-medium',
+  'claude-opus-4.7-thinking':   'claude-opus-4-7-medium-thinking',
+  'claude-opus-4.7-low':        'claude-opus-4-7-low',
+  'claude-opus-4.7-medium':     'claude-opus-4-7-medium',
+  'claude-opus-4.7-high':       'claude-opus-4-7-high',
+  'claude-opus-4.7-xhigh':      'claude-opus-4-7-xhigh',
+  'claude-opus-4.7-medium-thinking': 'claude-opus-4-7-medium-thinking',
+  'claude-opus-4.7-high-thinking':   'claude-opus-4-7-high-thinking',
+  'claude-opus-4.7-xhigh-thinking':  'claude-opus-4-7-xhigh-thinking',
 };
 for (const [k, v] of Object.entries(ANTHROPIC_DATED)) _lookup.set(k, v);
 
