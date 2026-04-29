@@ -26,6 +26,7 @@ import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelT
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
 import { validateHostFormat } from '../net-safety.js';
+import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 
 export function parseProxyUrl(proxy) {
   const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
@@ -287,28 +288,33 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   if (subpath === '/accounts' && method === 'POST') {
     try {
-      let account;
-      if (body.api_key) {
-        account = addAccountByKey(body.api_key, body.label);
-      } else if (body.token) {
-        account = await addAccountByToken(body.token, body.label);
-      } else {
+      if (!body.api_key && !body.token) {
         return json(res, 400, { error: 'Provide api_key or token' });
       }
 
-      // Handle optional proxy configuration
+      let parsedProxy = null;
       if (body.proxy) {
-        const parsed = parseProxyUrl(body.proxy);
-        if (!parsed) {
+        parsedProxy = parseProxyUrl(body.proxy);
+        if (!parsedProxy) {
           return json(res, 400, { error: 'ERR_PROXY_FORMAT_INVALID' });
         }
-        // Validate proxy host (respect ALLOW_PRIVATE_PROXY_HOSTS config)
-        if (config.allowPrivateProxyHosts) {
-          await validateHostFormat(parsed.host);
-        } else {
-          await assertPublicUrlHost(parsed.host);
+        try {
+          if (config.allowPrivateProxyHosts) {
+            await validateHostFormat(parsedProxy.host);
+          } else {
+            await assertPublicUrlHost(parsedProxy.host);
+          }
+        } catch (e) {
+          return json(res, 400, { error: e.message || 'ERR_PROXY_INVALID' });
         }
-        setAccountProxy(account.id, parsed);
+      }
+
+      const account = body.api_key
+        ? addAccountByKey(body.api_key, body.label)
+        : await addAccountByToken(body.token, body.label);
+
+      if (parsedProxy) {
+        setAccountProxy(account.id, parsedProxy);
         ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
       }
 
@@ -321,6 +327,40 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       });
     } catch (err) {
       return json(res, 400, { error: err.message });
+    }
+  }
+
+  // GET /accounts/import-local — discover Windsurf desktop client credentials
+  // Localhost-only (req.socket.remoteAddress check, not bind host) to prevent
+  // remote callers from reading the host machine's local Windsurf install.
+  if (subpath === '/accounts/import-local' && method === 'GET') {
+    const remote = req?.socket?.remoteAddress;
+    if (!isLoopbackAddress(remote)) {
+      log.warn(`local-windsurf import refused: non-loopback caller ${remote}`);
+      return json(res, 403, { error: 'ERR_LOCAL_IMPORT_LOOPBACK_ONLY', message: 'Local Windsurf import only available from 127.0.0.1' });
+    }
+    try {
+      const result = await discoverWindsurfCredentials();
+      log.info(`local-windsurf import: found ${result.accounts.length} account(s) across ${result.sources.filter(s => s.ok).length} source(s)`);
+      return json(res, 200, {
+        success: true,
+        accounts: result.accounts.map(a => ({
+          method: a.method,
+          apiKey: a.apiKey,
+          apiKeyMasked: a.apiKeyMasked,
+          email: a.email,
+          name: a.name,
+          apiServerUrl: a.apiServerUrl,
+          label: a.label,
+          source: a.source,
+        })),
+        sources: result.sources,
+        sqliteSupport: result.sqliteSupport,
+        platform: result.platform,
+      });
+    } catch (e) {
+      log.warn(`local-windsurf import failed: ${e.message}`);
+      return json(res, 500, { error: 'ERR_LOCAL_IMPORT_FAILED', message: e.message });
     }
   }
 

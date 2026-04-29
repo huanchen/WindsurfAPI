@@ -1773,7 +1773,9 @@ window._firebaseOAuth = async function(provider) {
         <div class="field-hint" style="margin-top:4px" data-i18n="field.proxy.hint">留空则使用全局代理设置</div>
         <div class="field-row-actions">
           <button class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
+          <button class="btn btn-outline" onclick="App.discoverLocalWindsurf()" data-i18n="action.importLocal" title="从本地 Windsurf 客户端读取已登录的凭证（仅本机访问）">从本地 Windsurf 导入</button>
         </div>
+        <div id="local-windsurf-result" style="margin-top:12px"></div>
       </div>
     </div>
 
@@ -3637,6 +3639,66 @@ const App = {
     const r = await this.api('POST', '/accounts', body);
     if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; document.getElementById('acc-proxy').value = ''; this.loadAccounts(); }
     else this.toast(r.error || I18n.t('toast.addFailed'), 'error');
+  },
+
+  async discoverLocalWindsurf() {
+    const root = document.getElementById('local-windsurf-result');
+    if (!root) return;
+    root.innerHTML = `<div class="text-sm" style="color:var(--text-muted)">${I18n.t('localImport.scanning')}</div>`;
+    try {
+      const r = await this.api('GET', '/accounts/import-local');
+      if (r.error) {
+        const errKey = r.error ? `error.${r.error}` : null;
+        const msg = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.message || r.error);
+        root.innerHTML = `<div class="text-sm" style="color:var(--error)">${this.esc(msg)}</div>`;
+        return;
+      }
+      if (!r.accounts || r.accounts.length === 0) {
+        const sourcesHtml = (r.sources || []).map(s => `<li>${this.esc(s.path)} — ${s.ok ? `${s.accountCount} ${I18n.t('localImport.found')}` : this.esc(s.reason || 'unknown')}</li>`).join('');
+        root.innerHTML = `
+          <div style="padding:12px;background:var(--surface-2);border-radius:var(--radius);font-size:13px;line-height:1.6">
+            <div style="color:var(--warn);font-weight:600">${I18n.t('localImport.empty')}</div>
+            <div style="color:var(--text-muted);margin-top:4px">${I18n.t('localImport.scannedPaths')}：</div>
+            <ul style="margin:6px 0 0 18px;color:var(--text-muted);font-size:12px">${sourcesHtml}</ul>
+            <div style="color:var(--text-muted);margin-top:6px">SQLite: ${r.sqliteSupport} · ${r.platform}</div>
+          </div>`;
+        return;
+      }
+      const rows = r.accounts.map((a, i) => `
+        <tr>
+          <td>${this.esc(a.email || a.label || '-')}</td>
+          <td><code>${this.esc(a.apiKeyMasked)}</code></td>
+          <td class="text-xs" style="color:var(--text-muted)">${this.esc(a.source)}</td>
+          <td>
+            <button class="btn btn-sm btn-primary" onclick="App.importLocalWindsurfAccount(${i})">${I18n.t('localImport.importBtn')}</button>
+          </td>
+        </tr>`).join('');
+      this._localWindsurfAccounts = r.accounts;
+      root.innerHTML = `
+        <div style="padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <div style="font-weight:600;margin-bottom:8px">${I18n.t('localImport.foundCount', { count: r.accounts.length })}</div>
+          <table class="table table-compact">
+            <thead><tr><th>${I18n.t('localImport.account')}</th><th>${I18n.t('localImport.key')}</th><th>${I18n.t('localImport.source')}</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    } catch (e) {
+      root.innerHTML = `<div class="text-sm" style="color:var(--error)">${this.esc(e.message || String(e))}</div>`;
+    }
+  },
+
+  async importLocalWindsurfAccount(idx) {
+    const acc = this._localWindsurfAccounts?.[idx];
+    if (!acc) return;
+    const r = await this.api('POST', '/accounts', { api_key: acc.apiKey, label: acc.label });
+    if (r.success) {
+      this.toast(I18n.t('localImport.importSuccess', { email: acc.email || acc.label }));
+      this.loadAccounts();
+    } else {
+      const errKey = r.error ? `error.${r.error}` : null;
+      const msg = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('toast.addFailed'));
+      this.toast(msg, 'error');
+    }
   },
 
   async toggleAccount(id, status) { await this.api('PATCH', `/accounts/${id}`, { status }); this.loadAccounts(); },

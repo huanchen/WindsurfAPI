@@ -97,7 +97,8 @@
     "selectNone": "Select None",
     "invert": "Invert",
     "showPassword": "Show/Hide Password",
-    "revealKey": "Click to reveal and copy full API key"
+    "revealKey": "Click to reveal and copy full API key",
+    "importLocal": "Import from local Windsurf"
   },
 
   "status": {
@@ -683,6 +684,19 @@
     "auth": "Auth"
   },
 
+  "localImport": {
+    "scanning": "Scanning local Windsurf client…",
+    "empty": "No logged-in local Windsurf credentials found",
+    "scannedPaths": "Scanned paths",
+    "found": "credential(s)",
+    "foundCount": "Found {{count}} local account(s) — review and click Import",
+    "account": "Account",
+    "key": "API Key",
+    "source": "Source",
+    "importBtn": "Import",
+    "importSuccess": "Imported {{email}}"
+  },
+
   "account": {
     "addSuccess": "Account added",
     "deleteSuccess": "Account deleted",
@@ -896,7 +910,9 @@
     "ERR_AUTH1_TOKEN_MISSING": "Auth1 response missing token",
     "ERR_POSTAUTH_FAILED": "Windsurf PostAuth failed",
     "ERR_TOKEN_FETCH_FAILED": "Failed to fetch one-time auth token",
-    "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken"
+    "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken",
+    "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "Local import only available from 127.0.0.1 — open the dashboard from the host machine itself, not via a public domain",
+    "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials"
   },
 
   "footer": {

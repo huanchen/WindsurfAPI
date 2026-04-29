@@ -97,7 +97,8 @@
     "selectNone": "全不选",
     "invert": "反选",
     "showPassword": "显示/隐藏密码",
-    "revealKey": "点击显示并复制完整 API Key"
+    "revealKey": "点击显示并复制完整 API Key",
+    "importLocal": "从本地 Windsurf 导入"
   },
 
   "status": {
@@ -683,6 +684,19 @@
     "auth": "认证"
   },
 
+  "localImport": {
+    "scanning": "正在扫描本地 Windsurf 客户端…",
+    "empty": "没找到已登录的本地 Windsurf 凭证",
+    "scannedPaths": "已扫描的位置",
+    "found": "条凭证",
+    "foundCount": "找到 {{count}} 个本地账号 — 检查无误后点导入",
+    "account": "账号",
+    "key": "API Key",
+    "source": "来源",
+    "importBtn": "导入",
+    "importSuccess": "已导入 {{email}}"
+  },
+
   "account": {
     "addSuccess": "账号已添加",
     "deleteSuccess": "账号已删除",
@@ -896,7 +910,9 @@
     "ERR_AUTH1_TOKEN_MISSING": "Auth1 回应缺少 token",
     "ERR_POSTAUTH_FAILED": "Windsurf PostAuth 失败",
     "ERR_TOKEN_FETCH_FAILED": "获取一次性 Auth Token 失败",
-    "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken"
+    "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken",
+    "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "本地导入仅限 127.0.0.1 访问 — 请在部署服务器本机的浏览器里打开 dashboard，不要用公网域名",
+    "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败"
   },
 
   "footer": {
