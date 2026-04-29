@@ -1082,20 +1082,33 @@ const PROBE_CANARIES = [
  *      4.6 series etc.) which don't appear in the enum allowlist, and serves
  *      as a fallback if GetUserStatus fails on this LS/account combo.
  */
-let _probeInFlight = false;
+// Per-account in-flight map. The previous global boolean serialized
+// every probe globally, and the dashboard surfaced "skipped" the same
+// way as "not found" -> users with N accounts saw N-1 fake "Account not
+// found" toasts when they bulk-probed. Now each account has its own
+// promise; a duplicate call on the same id returns the in-flight promise
+// so the caller awaits the same result without firing a second probe.
+const _probeInFlight = new Map();
 
 export async function probeAccount(id) {
-  if (_probeInFlight) {
-    log.info(`Probe skipped for ${id}: another probe is already running`);
-    return null;
-  }
-  _probeInFlight = true;
-  try {
+  const existing = _probeInFlight.get(id);
+  if (existing) return existing;
+
   const account = accounts.find(a => a.id === id);
   if (!account) return null;
 
+  const promise = _probeAccountImpl(account).finally(() => {
+    _probeInFlight.delete(id);
+  });
+  _probeInFlight.set(id, promise);
+  return promise;
+}
+
+async function _probeAccountImpl(account) {
+  try {
+
   // ── Step 1: authoritative tier via GetUserStatus ──
-  const status = await fetchUserStatus(id);
+  const status = await fetchUserStatus(account.id);
 
   const { WindsurfClient } = await import('./client.js');
   const { getModelInfo } = await import('./models.js');
@@ -1206,8 +1219,9 @@ export async function probeAccount(id) {
   saveAccounts();
   log.info(`Probe complete for ${account.id}: tier=${account.tier}${status ? ` plan="${status.planName}"` : ''}`);
   return { tier: account.tier, capabilities: account.capabilities };
-  } finally {
-    _probeInFlight = false;
+  } catch (err) {
+    log.error(`Probe failed for ${account.id}: ${err.message}`);
+    throw err;
   }
 }
 

@@ -547,6 +547,139 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     });
   }
 
+  // ─── Language Server binary inspect / update ─────────
+  // GET → current LS binary stat (size, mtime, sha256 prefix). UI uses
+  // this to show "binary installed at X, version sha:abcd1234, age 21d".
+  if (subpath === '/langserver/binary' && method === 'GET') {
+    const binPath = config.lsBinaryPath;
+    try {
+      const { statSync } = await import('node:fs');
+      const { createReadStream } = await import('node:fs');
+      const { createHash } = await import('node:crypto');
+      const stat = statSync(binPath);
+      const sha = await new Promise((resolve, reject) => {
+        const h = createHash('sha256');
+        createReadStream(binPath)
+          .on('data', c => h.update(c))
+          .on('end', () => resolve(h.digest('hex')))
+          .on('error', reject);
+      });
+      return json(res, 200, {
+        ok: true,
+        path: binPath,
+        sizeBytes: stat.size,
+        mtime: stat.mtime.toISOString(),
+        sha256: sha.slice(0, 16),
+      });
+    } catch (err) {
+      return json(res, 200, {
+        ok: false,
+        path: binPath,
+        error: err.code || err.message,
+      });
+    }
+  }
+
+  // POST → run install-ls.sh to download the latest binary, then restart
+  // every LS pool entry so requests pick up the new binary on next call.
+  // Body: { url?: string } — optional override (e.g. desktop-extracted
+  // binary URL); falls back to `install-ls.sh` auto-discovery (our
+  // release → Exafunction).
+  if (subpath === '/langserver/update' && method === 'POST') {
+    const { spawn } = await import('node:child_process');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join: pjoin } = await import('node:path');
+    // install-ls.sh ships at the repo root, two levels above this file
+    // (src/dashboard/api.js). Resolving by import.meta.url avoids any
+    // dependence on cwd, so the endpoint works whether started from /app
+    // (Docker), the repo root, or a deeper subdir.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const scriptPath = pjoin(here, '..', '..', 'install-ls.sh');
+    if (!existsSync(scriptPath)) {
+      return json(res, 500, {
+        ok: false,
+        error: `install-ls.sh not found at ${scriptPath}`,
+      });
+    }
+    const url = body && typeof body.url === 'string' ? body.url.trim() : '';
+    // Defence-in-depth: only allow http(s) URLs from a small allowlist of
+    // hosts. Without this, an attacker who got past dashboard auth could
+    // pipe an arbitrary URL into the install script and have curl write
+    // bytes to LS_BINARY_PATH which is then chmod +x and exec'd as the
+    // node user. Still gated by checkAuth above; this is a second layer.
+    if (url) {
+      let parsed;
+      try { parsed = new URL(url); } catch {
+        return json(res, 400, { ok: false, error: 'invalid url' });
+      }
+      if (parsed.protocol !== 'https:') {
+        return json(res, 400, { ok: false, error: 'url must be https' });
+      }
+      const allowedHosts = new Set([
+        'github.com',
+        'objects.githubusercontent.com',
+        'release-assets.githubusercontent.com',
+        'api.github.com',
+      ]);
+      if (!allowedHosts.has(parsed.hostname)) {
+        return json(res, 400, {
+          ok: false,
+          error: `url host not allowed; permitted: ${[...allowedHosts].join(', ')}`,
+        });
+      }
+    }
+    const args = url ? ['--url', url] : [];
+    const env = {
+      ...process.env,
+      LS_INSTALL_PATH: config.lsBinaryPath,
+    };
+    const child = spawn('bash', [scriptPath, ...args], { env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', c => { stdout += c.toString(); });
+    child.stderr.on('data', c => { stderr += c.toString(); });
+    const exitCode = await new Promise(resolve => {
+      child.on('close', resolve);
+      child.on('error', () => resolve(-1));
+    });
+    if (exitCode !== 0) {
+      return json(res, 200, {
+        ok: false,
+        exitCode,
+        stdout: stdout.slice(-4000),
+        stderr: stderr.slice(-4000),
+      });
+    }
+    // Restart every LS pool entry. The pool is keyed by proxy; iterating
+    // through the live list catches per-account proxies as well as the
+    // default no-proxy LS. Errors during restart get surfaced so the user
+    // knows whether they need to bounce the container.
+    const { _poolKeys, restartLsForProxy: doRestart, getProxyByKey } =
+      await import('../langserver.js');
+    let restarted = 0;
+    let restartErrors = [];
+    try {
+      const keys = typeof _poolKeys === 'function' ? _poolKeys() : ['default'];
+      for (const key of keys) {
+        try {
+          const proxy = typeof getProxyByKey === 'function' ? getProxyByKey(key) : null;
+          await doRestart(proxy);
+          restarted++;
+        } catch (e) {
+          restartErrors.push(`${key}: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      restartErrors.push(e.message);
+    }
+    return json(res, 200, {
+      ok: true,
+      stdout: stdout.slice(-4000),
+      restarted,
+      restartErrors,
+    });
+  }
+
   // ─── Language Server ──────────────────────────────────
   if (subpath === '/langserver/restart' && method === 'POST') {
     if (!body.confirm) {

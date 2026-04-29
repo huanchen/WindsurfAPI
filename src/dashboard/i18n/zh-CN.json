@@ -69,6 +69,7 @@
   "action": {
     "checkUpdate": "检查更新",
     "applyUpdate": "一键更新并重启",
+    "updateLsBinary": "更新 LS",
     "restart": "重启",
     "login": "登录",
     "save": "保存",
@@ -584,6 +585,9 @@
   "confirm": {
     "restartTitle": "重启 Language Server",
     "restartDesc": "进行中的请求将会失败，确定要继续吗？",
+    "updateLsTitle": "更新 LS Binary",
+    "updateLsDesc": "从 WindsurfAPI / Exafunction GitHub release 下载最新 language_server 并重启 LS 池。期间正在进行的请求会失败一次。",
+    "updateLsButton": "更新",
     "restoreDefaultDesc": "恢复到默认？",
     "clearPoolDesc": "当前所有进行中的 Cascade 会话都将被清除，确定继续吗？"
   },
@@ -807,6 +811,14 @@
     "copyFailedError": "复制失败：{{error}}",
     "enterEmailPassword": "请输入邮箱和密码",
     "restarting": "Language Server 重启中...",
+    "lsBinaryUpdating": "LS 更新中…",
+    "lsBinaryUpdated": "LS 更新完成，重启 {{count}} 个实例",
+    "lsBinaryUpdatedWithErrors": "LS 更新完成，重启 {{count}} 个实例（{{errors}} 个失败）",
+    "lsBinaryUpdateFailed": "LS 更新失败：{{error}}",
+    "lsBinaryUpdateRequestFailed": "LS 更新请求失败：{{error}}",
+    "lsBinaryUnreadable": "LS binary 不可读：{{error}}",
+    "lsBinaryReadFailed": "LS 信息读取失败：{{error}}",
+    "lsBinaryStat": "{{path}} · {{sizeMb}} MB · sha256:{{sha}} · {{age}} 天前安装",
     "proxyConfigured": "账号代理已配置",
     "proxyCleared": "账号代理已清除",
     "globalProxySaved": "全局代理已保存",

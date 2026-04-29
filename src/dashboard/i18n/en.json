@@ -69,6 +69,7 @@
   "action": {
     "checkUpdate": "Check Update",
     "applyUpdate": "Update & Restart",
+    "updateLsBinary": "Update LS",
     "restart": "Restart",
     "reset": "Reset",
     "save": "Save",
@@ -584,6 +585,9 @@
   "confirm": {
     "restartTitle": "Restart Language Server",
     "restartDesc": "In-progress requests will fail. Continue?",
+    "updateLsTitle": "Update LS Binary",
+    "updateLsDesc": "Download the latest language_server from the WindsurfAPI / Exafunction GitHub release and restart the LS pool. In-flight requests will fail once.",
+    "updateLsButton": "Update",
     "restoreDefaultDesc": "restore to default?",
     "clearPoolDesc": "All active Cascade sessions will be cleared. Continue?"
   },
@@ -807,6 +811,14 @@
     "copyFailedError": "Copy failed: {{error}}",
     "enterEmailPassword": "Please enter email and password",
     "restarting": "Language Server restarting...",
+    "lsBinaryUpdating": "Updating LS binary…",
+    "lsBinaryUpdated": "LS updated, restarted {{count}} instance(s)",
+    "lsBinaryUpdatedWithErrors": "LS updated, restarted {{count}} instance(s) ({{errors}} failed)",
+    "lsBinaryUpdateFailed": "LS update failed: {{error}}",
+    "lsBinaryUpdateRequestFailed": "LS update request failed: {{error}}",
+    "lsBinaryUnreadable": "LS binary unreadable: {{error}}",
+    "lsBinaryReadFailed": "Failed to read LS info: {{error}}",
+    "lsBinaryStat": "{{path}} · {{sizeMb}} MB · sha256:{{sha}} · installed {{age}}d ago",
     "proxyConfigured": "Account proxy configured",
     "proxyCleared": "Account proxy cleared",
     "globalProxySaved": "Global proxy saved",

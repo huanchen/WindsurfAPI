@@ -394,6 +394,24 @@ export function getLsEntryByPort(port) {
   return null;
 }
 
+/**
+ * Iterate over live LS pool keys. Used by the dashboard binary-update
+ * endpoint to restart every spawned instance after install-ls.sh
+ * replaces the binary on disk.
+ */
+export function _poolKeys() {
+  return [..._pool.keys()];
+}
+
+/**
+ * Recover the proxy descriptor for a given pool key. Returns null for
+ * the default no-proxy entry.
+ */
+export function getProxyByKey(key) {
+  const entry = _pool.get(key);
+  return entry?.proxy || null;
+}
+
 // ─── Backward-compat API ───────────────────────────────────
 
 export function getLsPort() {

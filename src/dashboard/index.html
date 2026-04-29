@@ -1557,13 +1557,20 @@ window._firebaseOAuth = async function(provider) {
           <div class="section-title" data-i18n="section.lsStatus.title">Language Server</div>
           <div class="section-desc" data-i18n="section.lsStatus.desc">语言服务器实例状态</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="App.restartLs()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          <span data-i18n="action.restart">重启</span>
-        </button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="App.updateLsBinary()" title="Download latest language_server binary and restart pool">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span data-i18n="action.updateLsBinary">更新 LS</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="App.restartLs()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span data-i18n="action.restart">重启</span>
+          </button>
+        </div>
       </div>
       <div class="section-body">
         <div id="ls-status"></div>
+        <div id="ls-binary-info" style="margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
       </div>
     </div>
   </section>
@@ -2749,6 +2756,7 @@ const App = {
         <span class="badge ${ls.running ? 'running' : 'stopped'}">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</span>
         <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · ${I18n.t('field.port.label')} ${ls.port || '-'} · ${I18n.t('card.restarts')} ${ls.restartCount || 0}</span>
       `;
+      this.loadLsBinary();
     }
     this.poll('overview', () => this.loadOverview(), 15000);
   },
@@ -2758,6 +2766,49 @@ const App = {
     if (!ok) return;
     await this.api('POST', '/langserver/restart', { confirm: true });
     this.toast(I18n.t('toast.restarting'), 'info');
+  },
+
+  async loadLsBinary() {
+    const el = document.getElementById('ls-binary-info');
+    if (!el) return;
+    try {
+      const r = await this.api('GET', '/langserver/binary');
+      if (!r.ok) {
+        const msg = I18n.t('toast.lsBinaryUnreadable', { error: r.error || 'unknown' });
+        el.innerHTML = `<span style="color:var(--text-error,#ef4444)">${msg}</span> · <code style="font-family:monospace">${r.path || ''}</code>`;
+        return;
+      }
+      const sizeMb = (r.sizeBytes / (1024 * 1024)).toFixed(1);
+      const age = Math.floor((Date.now() - new Date(r.mtime).getTime()) / 86400000);
+      el.textContent = I18n.t('toast.lsBinaryStat', { path: r.path, sizeMb, sha: r.sha256, age });
+    } catch (e) {
+      el.textContent = I18n.t('toast.lsBinaryReadFailed', { error: e.message });
+    }
+  },
+
+  async updateLsBinary() {
+    const ok = await this.confirm(
+      I18n.t('confirm.updateLsTitle'),
+      I18n.t('confirm.updateLsDesc'),
+      { danger: false, okText: I18n.t('confirm.updateLsButton') },
+    );
+    if (!ok) return;
+    this.toast(I18n.t('toast.lsBinaryUpdating'), 'info');
+    try {
+      const r = await this.api('POST', '/langserver/update', {});
+      if (r.ok) {
+        const errs = (r.restartErrors || []).length;
+        const msg = errs
+          ? I18n.t('toast.lsBinaryUpdatedWithErrors', { count: r.restarted, errors: errs })
+          : I18n.t('toast.lsBinaryUpdated', { count: r.restarted });
+        this.toast(msg, 'success');
+        if (this.loadLsBinary) await this.loadLsBinary();
+      } else {
+        this.toast(I18n.t('toast.lsBinaryUpdateFailed', { error: r.error || r.stderr || 'unknown' }), 'error');
+      }
+    } catch (e) {
+      this.toast(I18n.t('toast.lsBinaryUpdateRequestFailed', { error: e.message }), 'error');
+    }
   },
 
   // ─── Windsurf Login ──────────────────────────
