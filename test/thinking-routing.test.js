@@ -1,6 +1,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleChatCompletions } from '../src/handlers/chat.js';
+import { handleChatCompletions, resolveEffectiveModelKey } from '../src/handlers/chat.js';
+import { getModelInfo, resolveModel } from '../src/models.js';
 import {
   getModelAccessConfig,
   setModelAccessList,
@@ -23,6 +24,14 @@ function thinkingRequest() {
 }
 
 describe('thinking sibling routing', () => {
+  it('does not auto-route Opus 4.7 thinking requests to the rejected thinking UID', () => {
+    const modelKey = resolveModel('claude-opus-4-7');
+    const effective = resolveEffectiveModelKey(modelKey, true);
+
+    assert.equal(effective, 'claude-opus-4-7-medium');
+    assert.notEqual(getModelInfo(effective)?.modelUid, 'claude-opus-4-7-medium-thinking');
+  });
+
   it('checks model access against the effective thinking model', async () => {
     setModelAccessMode('allowlist');
     setModelAccessList(['claude-sonnet-4.6']);

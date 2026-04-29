@@ -397,6 +397,24 @@ export function isThinkingRequested(body) {
   return false;
 }
 
+function isOpus47ModelKey(modelKey) {
+  return /^claude-opus-4-7(?:-|$)/i.test(String(modelKey || ''));
+}
+
+function isOpus47ThinkingAutoRouteEnabled() {
+  return process.env.WINDSURFAPI_OPUS47_THINKING_UIDS === '1';
+}
+
+export function resolveEffectiveModelKey(modelKey, wantThinking) {
+  if (!wantThinking || !modelKey || modelKey.includes('thinking')) return modelKey;
+  const thinkingModelKey = modelKey + '-thinking';
+  if (!getModelInfo(thinkingModelKey)) return modelKey;
+  if (isOpus47ModelKey(modelKey) && !isOpus47ThinkingAutoRouteEnabled()) {
+    return modelKey;
+  }
+  return thinkingModelKey;
+}
+
 export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allowToolReuse = OPUS47_TOOL_EMULATED_REUSE }) {
   if (!useCascade) return false;
   if (!emulateTools) return true;
@@ -911,12 +929,11 @@ export async function handleChatCompletions(body, context = {}) {
 
   const modelKey = resolveModel(reqModel || config.defaultModel);
   const wantThinking = isThinkingRequested(body);
-  let effectiveModelKey = modelKey;
-  if (wantThinking && !modelKey.includes('thinking') && getModelInfo(modelKey + '-thinking')) {
-    effectiveModelKey = modelKey + '-thinking';
-  }
+  const effectiveModelKey = resolveEffectiveModelKey(modelKey, wantThinking);
   if (effectiveModelKey !== modelKey) {
     log.info(`Chat[${reqId}]: routed ${modelKey} -> ${effectiveModelKey} (wantThinking=${wantThinking})`);
+  } else if (wantThinking && isOpus47ModelKey(modelKey) && getModelInfo(modelKey + '-thinking') && !isOpus47ThinkingAutoRouteEnabled()) {
+    log.warn(`Chat[${reqId}]: Opus 4.7 thinking auto-route disabled; using base model ${modelKey}. Upstream LS rejects ${modelKey}-thinking as model not found. Set WINDSURFAPI_OPUS47_THINKING_UIDS=1 only after upstream registers it.`);
   }
   const routingModelKey = effectiveModelKey;
   const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
