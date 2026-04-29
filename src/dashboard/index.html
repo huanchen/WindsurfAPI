@@ -2190,7 +2190,8 @@ window._firebaseOAuth = async function(provider) {
     <h3 data-i18n="login.title">控制台登录</h3>
     <p data-i18n="login.subtitle">请输入管理密码以继续</p>
     <input type="password" id="login-password" class="input" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Dashboard 密码" onkeydown="if(event.key==='Enter')App.login()">
-    <button class="btn btn-primary" onclick="App.login()" data-i18n="login.button">登 录</button>
+    <button class="btn btn-primary" id="login-btn" onclick="App.login()" data-i18n="login.button">登 录</button>
+    <div id="login-error" style="margin-top:12px;color:var(--error);font-size:13px;min-height:18px"></div>
   </div>
 </div>
 
@@ -2372,10 +2373,39 @@ const App = {
     else this.loadOverview();
   },
 
-  login() {
-    this.password = document.getElementById('login-password').value;
-    localStorage.setItem('dp', this.password);
-    this.init();
+  async login() {
+    const pw = document.getElementById('login-password').value;
+    const btn = document.getElementById('login-btn');
+    const errEl = document.getElementById('login-error');
+    if (errEl) errEl.textContent = '';
+    if (!pw) {
+      if (errEl) errEl.textContent = I18n.t('login.empty') || '请输入密码';
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.dataset.origLabel ||= btn.textContent; btn.textContent = I18n.t('login.checking') || '验证中…'; }
+    try {
+      // Pre-flight: check the password against /auth before storing it so a
+      // wrong attempt actually shows feedback instead of silently re-rendering
+      // the same overlay (which looks like "no response" to users).
+      const r = await fetch('/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
+      const data = await r.json().catch(() => ({}));
+      if (data.locked) {
+        if (errEl) errEl.textContent = I18n.t('login.locked') || '后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启';
+        return;
+      }
+      if (data.required && !data.valid) {
+        if (errEl) errEl.textContent = I18n.t('login.wrong') || '密码不正确';
+        document.getElementById('login-password')?.focus();
+        return;
+      }
+      this.password = pw;
+      localStorage.setItem('dp', pw);
+      await this.init();
+    } catch (e) {
+      if (errEl) errEl.textContent = (I18n.t('login.networkError') || '无法连接服务器') + ': ' + e.message;
+    } finally {
+      if (btn) { btn.disabled = false; if (btn.dataset.origLabel) btn.textContent = btn.dataset.origLabel; }
+    }
   },
 
   navigate(panel) {

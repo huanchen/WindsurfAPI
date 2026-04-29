@@ -507,7 +507,12 @@
     "title": "控制台登录",
     "subtitle": "请输入管理密码以继续",
     "passwordPlaceholder": "Dashboard 密码",
-    "button": "登 录"
+    "button": "登 录",
+    "checking": "验证中…",
+    "wrong": "密码不正确",
+    "empty": "请输入密码",
+    "locked": "后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启",
+    "networkError": "无法连接服务器"
   },
 
   "range": {

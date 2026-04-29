@@ -507,7 +507,12 @@
     "title": "Control Panel Login",
     "subtitle": "Please enter the admin password to continue",
     "passwordPlaceholder": "Dashboard Password",
-    "button": "Login"
+    "button": "Login",
+    "checking": "Checking…",
+    "wrong": "Wrong password",
+    "empty": "Password required",
+    "locked": "Backend has no password configured — set DASHBOARD_PASSWORD or API_KEY env and restart",
+    "networkError": "Cannot reach server"
   },
 
   "range": {

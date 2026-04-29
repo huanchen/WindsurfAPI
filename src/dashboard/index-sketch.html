@@ -2001,7 +2001,8 @@ window._firebaseOAuth = async function(provider) {
     <div class="login-mark">W<span class="em">&amp;</span>API</div>
     <div class="login-tag">a console for the curious</div>
     <input type="password" id="login-password" class="input" placeholder="dashboard password" onkeydown="if(event.key==='Enter')App.login()">
-    <button class="btn btn-primary" onclick="App.login()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg> enter</button>
+    <button class="btn btn-primary" id="login-btn" onclick="App.login()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg> <span id="login-btn-label">enter</span></button>
+    <div id="login-error" style="margin-top:12px;color:var(--error);font-family:'Caveat',cursive;font-size:18px;min-height:22px"></div>
   </div>
 </div>
 
@@ -2085,10 +2086,45 @@ const App = {
     if (hash) this.navigate(hash); else this.loadOverview();
   },
 
-  login() {
-    this.password = document.getElementById('login-password').value;
-    localStorage.setItem('dp', this.password);
-    this.init();
+  async login() {
+    const pw = document.getElementById('login-password').value;
+    const btn = document.getElementById('login-btn');
+    const lbl = document.getElementById('login-btn-label');
+    const errEl = document.getElementById('login-error');
+    const en = I18n.locale === 'en';
+    if (errEl) errEl.textContent = '';
+    if (!pw) {
+      if (errEl) errEl.textContent = en ? 'password required' : '请输入密码';
+      return;
+    }
+    if (btn) btn.disabled = true;
+    if (lbl) { lbl.dataset.orig ||= lbl.textContent; lbl.textContent = en ? 'checking…' : '验证中…'; }
+    try {
+      // Pre-flight: check the password against /auth before storing it so a
+      // wrong attempt actually shows feedback instead of silently re-rendering
+      // the same overlay (which looks like "no response" to users).
+      const r = await fetch('/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
+      const data = await r.json().catch(() => ({}));
+      if (data.locked) {
+        if (errEl) errEl.textContent = en
+          ? 'backend has no password configured — set DASHBOARD_PASSWORD or API_KEY env and restart'
+          : '后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启';
+        return;
+      }
+      if (data.required && !data.valid) {
+        if (errEl) errEl.textContent = en ? 'wrong password' : '密码不正确';
+        document.getElementById('login-password')?.focus();
+        return;
+      }
+      this.password = pw;
+      localStorage.setItem('dp', pw);
+      await this.init();
+    } catch (e) {
+      if (errEl) errEl.textContent = (en ? 'cannot reach server: ' : '无法连接服务器: ') + e.message;
+    } finally {
+      if (btn) btn.disabled = false;
+      if (lbl && lbl.dataset.orig) lbl.textContent = lbl.dataset.orig;
+    }
   },
 
   navigate(panel) {
