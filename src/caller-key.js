@@ -30,11 +30,31 @@ export function extractBodyCallerSubKey(body) {
   return sha256Hex(candidates.join('|')).slice(0, 16);
 }
 
+// IP + UA fallback used when an apiKey-mode caller has no explicit body
+// user signal. Without this, every Claude Code / claudecode CLI on a
+// self-hosted single-user setup hits "shared API key, no per-user scope"
+// and cascade reuse stays disabled — exactly the symptom reported in
+// #93 follow-up by zhangzhang-bit (claude-opus-4-6-thinking, msgs growing
+// 33→97 across turns, reuse=false on every Cascade started).
+//
+// Two physical clients sharing one apiKey will land on different IP/UA
+// hashes and stay isolated; same client across turns lands on the same
+// hash and lets the cascade pool reuse the upstream session.
+function ipUaFingerprint(req) {
+  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = forwarded || req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  const ua = req?.headers?.['user-agent'] || '';
+  if (!ip && !ua) return '';
+  return sha256Hex(`${ip}\0${ua}`).slice(0, 16);
+}
+
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
   if (apiKey) {
     const base = `api:${sha256Hex(apiKey).slice(0, 32)}`;
-    return bodySubKey ? `${base}:user:${bodySubKey}` : base;
+    if (bodySubKey) return `${base}:user:${bodySubKey}`;
+    const ipua = ipUaFingerprint(req);
+    return ipua ? `${base}:client:${ipua}` : base;
   }
   const sessionId = req?.headers?.['x-dashboard-session'] || req?.headers?.['x-session-id'] || '';
   if (sessionId) {
@@ -57,6 +77,10 @@ export function callerKeyFromRequest(req, apiKey = '', body = null) {
 export function hasCallerScope(callerKey, req, body) {
   if (typeof callerKey === 'string') {
     if (callerKey.includes(':user:')) return true;
+    // Match :client: anywhere — apiKey-mode now appends `:client:<ip+ua>`
+    // as a fallback subkey when there's no body user signal, so the
+    // scope check has to look past the prefix.
+    if (callerKey.includes(':client:')) return true;
     if (callerKey.startsWith('session:') || callerKey.startsWith('client:')) return true;
   }
   if (body && extractBodyCallerSubKey(body)) return true;

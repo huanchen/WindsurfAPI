@@ -44,15 +44,56 @@ describe('callerKeyFromRequest with body', () => {
     assert.match(k, /^api:[a-f0-9]+:user:[a-f0-9]{16}$/);
   });
 
-  it('omits :user: when body has no signal', () => {
+  it('falls back to :client:<ip+ua-digest> when body has no user signal', () => {
+    // v2.0.37 (#93 follow-up): bare apiKey + no body user used to drop
+    // straight to "shared API key, no per-user scope" and disable
+    // cascade reuse. Now we synthesize a stable per-physical-client
+    // subkey from IP + UA so single-user self-hosted setups can reuse.
     const k = callerKeyFromRequest(fakeReq(), 'sk-test-key', {});
-    assert.match(k, /^api:[a-f0-9]+$/);
+    assert.match(k, /^api:[a-f0-9]+:client:[a-f0-9]{16}$/);
   });
 
   it('two end-users on same shared API key get different keys', () => {
     const ka = callerKeyFromRequest(fakeReq(), 'shared-key', { user: 'alice' });
     const kb = callerKeyFromRequest(fakeReq(), 'shared-key', { user: 'bob' });
     assert.notEqual(ka, kb);
+  });
+
+  it('two physical clients on same apiKey land on different subkeys via IP+UA', () => {
+    // The v2.0.37 fallback must not collapse distinct clients into one
+    // pool — that would re-introduce the cross-user cascade bleed
+    // v2.0.25 originally guarded against.
+    const ka = callerKeyFromRequest(
+      fakeReq({ ip: '1.2.3.4', headers: { 'user-agent': 'claude-cli/1.0' } }),
+      'shared-key', null,
+    );
+    const kb = callerKeyFromRequest(
+      fakeReq({ ip: '5.6.7.8', headers: { 'user-agent': 'claude-cli/1.0' } }),
+      'shared-key', null,
+    );
+    assert.notEqual(ka, kb);
+    assert.match(ka, /^api:[a-f0-9]+:client:[a-f0-9]{16}$/);
+  });
+
+  it('same physical client across turns lands on the same subkey (reuse precondition)', () => {
+    // The whole point of the v2.0.37 fallback: stable identity across
+    // requests so the cascade pool actually finds the prior entry.
+    const ka = callerKeyFromRequest(
+      fakeReq({ ip: '1.2.3.4', headers: { 'user-agent': 'claude-cli/1.0' } }),
+      'shared-key', null,
+    );
+    const kb = callerKeyFromRequest(
+      fakeReq({ ip: '1.2.3.4', headers: { 'user-agent': 'claude-cli/1.0' } }),
+      'shared-key', null,
+    );
+    assert.equal(ka, kb);
+  });
+
+  it('omits :client: when no IP and no UA are extractable', () => {
+    // Defensive: if both IP and UA are empty strings the fallback
+    // produces no useful identity so we fall back to the bare apiKey.
+    const k = callerKeyFromRequest({ headers: {} }, 'sk-test-key', {});
+    assert.match(k, /^api:[a-f0-9]+$/);
   });
 
   it('falls back to header session id when no API key', () => {
@@ -71,6 +112,12 @@ describe('hasCallerScope', () => {
     assert.equal(hasCallerScope('api:abc:user:xyz'), true);
   });
 
+  it('true for callerKey containing :client: anywhere (v2.0.37 fallback)', () => {
+    // apiKey-mode now appends `:client:<ip+ua-hash>` — scope check
+    // must recognize the segment anywhere, not just as a prefix.
+    assert.equal(hasCallerScope('api:abc:client:xyz'), true);
+  });
+
   it('true for session: prefix', () => {
     assert.equal(hasCallerScope('session:abc'), true);
   });
@@ -79,7 +126,10 @@ describe('hasCallerScope', () => {
     assert.equal(hasCallerScope('client:abc'), true);
   });
 
-  it('false for bare api: without user', () => {
+  it('false for bare api: without any subkey', () => {
+    // Should never happen in practice now (callerKeyFromRequest
+    // always tries to add a :client: or :user: subkey) but if some
+    // path fabricates a bare key, scope is still rejected.
     assert.equal(hasCallerScope('api:abc'), false);
   });
 

@@ -367,6 +367,11 @@ const CASCADE_REUSE_ALLOW_SHARED_API_KEY = process.env.CASCADE_REUSE_ALLOW_SHARE
 function hasPerUserScope(callerKey) {
   if (typeof callerKey !== 'string' || !callerKey) return false;
   if (callerKey.includes(':user:')) return true;
+  // v2.0.37: apiKey-mode now appends `:client:<ip+ua>` when no body
+  // user signal is present, so single-user self-hosted setups land on
+  // a stable scope and cascade reuse works across turns. Match the
+  // segment anywhere in the string (#93 follow-up zhangzhang-bit).
+  if (callerKey.includes(':client:')) return true;
   if (callerKey.startsWith('session:') || callerKey.startsWith('client:')) return true;
   return false;
 }
