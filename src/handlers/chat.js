@@ -434,6 +434,30 @@ export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allo
   return !!allowToolReuse && isToolEmulatedReusableModel(modelKey);
 }
 
+// Issue #86 follow-up (KLFDan0534): GLM 5.1 (and other non-reasoning models)
+// silently produce nothing in claudecode/openclaw — claudecode shows the
+// "thinking" indicator but the user sees no text and no thinking content.
+//
+// Root cause: cascade upstream sometimes packs the entire model response
+// into `step.thinking` instead of `step.responseText`. client.js routes
+// step.thinking → chunk.thinking → SSE `reasoning_content`. Claude Code
+// (and many OpenAI-style clients) hide reasoning_content by default and
+// only render `content` deltas. Result: visible silence.
+//
+// Fix: at stream end, for NON-reasoning models that produced ONLY thinking
+// (no text, no tool_calls), promote the thinking buffer to a content delta.
+// Reasoning models (caller asked for thinking, OR routing landed on a
+// -thinking variant) keep the original split behaviour — those clients
+// expect reasoning_content separately.
+export function shouldFallbackThinkingToText({ routingModelKey, body, accText, accThinking, hasToolCalls }) {
+  if (hasToolCalls) return false;
+  if (accText && accText.length) return false;
+  if (!accThinking || !accThinking.length) return false;
+  if (routingModelKey && /thinking/i.test(routingModelKey)) return false;
+  if (body && (body.reasoning_effort || (body.thinking && body.thinking.type && body.thinking.type !== 'disabled'))) return false;
+  return true;
+}
+
 function shouldForceCascadeReuse({ emulateTools, modelKey }) {
   return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isToolEmulatedReusableModel(modelKey);
 }
@@ -1496,6 +1520,21 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (toolCalls.length) {
       toolCalls = toolCalls.map(tc => sanitizeToolCall(repairToolCallArguments(tc, messages)));
     }
+    // GLM5.1 silence fallback (#86 follow-up KLFDan0534) — non-stream path.
+    // Same logic as streamResponse: if a non-reasoning model produced ONLY
+    // thinking content (and no tool_calls), promote thinking to text so the
+    // OpenAI-compatible client renders it as `content`, not `reasoning_content`.
+    if (shouldFallbackThinkingToText({
+      routingModelKey: modelKey,
+      body: null,
+      accText: allText,
+      accThinking: allThinking,
+      hasToolCalls: toolCalls.length > 0,
+    })) {
+      log.info(`Chat[non-stream]: thinking-only response from non-reasoning model ${modelKey}; promoting ${allThinking.length}c thinking → content`);
+      allText = allThinking;
+      allThinking = '';
+    }
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
     // so the next request in the same conversation can resume it.
@@ -2027,6 +2066,21 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                   choices: [{ index: 0, delta: { content: cleaned }, finish_reason: null }] });
                 accText = cleaned;
               }
+            }
+            // GLM5.1 silence fallback (#86 follow-up KLFDan0534) — see
+            // shouldFallbackThinkingToText comment for rationale.
+            if (shouldFallbackThinkingToText({
+              routingModelKey,
+              body,
+              accText,
+              accThinking,
+              hasToolCalls: collectedToolCalls.length > 0,
+            })) {
+              log.info(`Chat[${reqId}]: thinking-only stream from non-reasoning model ${routingModelKey}; promoting ${accThinking.length}c thinking → content`);
+              send({ id, object: 'chat.completion.chunk', created, model,
+                choices: [{ index: 0, delta: { content: accThinking }, finish_reason: null }] });
+              accText = accThinking;
+              accThinking = '';
             }
             const finalReason = collectedToolCalls.length ? 'tool_calls' : 'stop';
             // OpenAI spec: the finish_reason chunk carries NO usage, then a
