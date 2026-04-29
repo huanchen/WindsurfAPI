@@ -52,8 +52,26 @@ describe('shouldUseCascadeReuse', () => {
     assert.equal(shouldUseCascadeReuse({ useCascade: true, emulateTools: true, modelKey: 'claude-opus-4.5' }), false);
   });
 
-  it('rejects sonnet 4.6 (only Opus is tool-sensitive)', () => {
-    assert.equal(shouldUseCascadeReuse({ useCascade: true, emulateTools: true, modelKey: 'claude-sonnet-4.6' }), false);
+  it('allows tool-emulated reuse for Sonnet 4.6 thinking (#93)', () => {
+    assert.equal(shouldUseCascadeReuse({ useCascade: true, emulateTools: true, modelKey: 'claude-sonnet-4-6-thinking' }), true);
+  });
+
+  it('can disable Sonnet 4.6 tool reuse with WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE=1', () => {
+    const previous = process.env.WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE;
+    process.env.WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE = '1';
+    try {
+      assert.equal(shouldUseCascadeReuse({ useCascade: true, emulateTools: true, modelKey: 'claude-sonnet-4-6-thinking' }), false);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE;
+      } else {
+        process.env.WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE = previous;
+      }
+    }
+  });
+
+  it('rejects GPT-5 tool-emulated reuse', () => {
+    assert.equal(shouldUseCascadeReuse({ useCascade: true, emulateTools: true, modelKey: 'gpt-5' }), false);
   });
 });
 
@@ -80,6 +98,15 @@ describe('shouldUseStrictCascadeReuse', () => {
     assert.equal(shouldUseStrictCascadeReuse({
       emulateTools: true,
       modelKey: 'claude-4.5-haiku',
+      strict: false,
+      allowOpus47Strict: true,
+    }), false);
+  });
+
+  it('keeps Sonnet 4.6 out of Opus-only strict reuse', () => {
+    assert.equal(shouldUseStrictCascadeReuse({
+      emulateTools: true,
+      modelKey: 'claude-sonnet-4-6-thinking',
       strict: false,
       allowOpus47Strict: true,
     }), false);
