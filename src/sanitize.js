@@ -60,17 +60,32 @@ const _repoRoot = (() => {
 // Verified with the drift probe (scripts/_agent_drift_probe.py).
 const REDACTED_PATH = '…';
 
+// Path body char class: anything that's not whitespace or syntax-terminator.
+// Used in patterns and in cut-point detection — must match.
+// Note: `\\` is INSIDE the char class so backslash-separated tails (Windows
+// style: `\home\user\projects\workspace-x\src\index.js`) keep extending the
+// match instead of terminating at the first backslash.
 const PATTERNS = [
-  [/\/tmp\/windsurf-workspace(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
-  [/\/home\/user\/projects\/workspace-[a-z0-9]+(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
-  [/\/opt\/windsurf(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
-  [new RegExp(_repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\/[^\\s"\'`<>)}\\],*;]*)?', 'g'), REDACTED_PATH],
+  [/\/tmp\/windsurf-workspace(?:[/\\][^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  // Unix and Windows-mixed forms — issue #86 reports of
+  // `C:\home\user\projects\workspace-devinxse` leaking despite the Unix-only
+  // regex catching `/home/user/projects/workspace-skxwsx01`. Cover:
+  //   /home/user/projects/workspace-x[/...]
+  //   \home\user\projects\workspace-x[\...]
+  //   C:\home\user\projects\workspace-x[\...]
+  //   C:\home/user/projects/workspace-x  (mixed separators, GLM-style hallucination)
+  [/(?:[A-Za-z]:)?[/\\]home[/\\]user[/\\]projects[/\\]workspace-[a-z0-9]+(?:[/\\][^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  [/\/opt\/windsurf(?:[/\\][^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
+  [new RegExp(_repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:[/\\\\][^\\s"\'`<>)}\\],*;]*)?', 'g'), REDACTED_PATH],
 ];
 
 // Bare literals (no path tail) used by the streaming cut-point finder.
+// Listed once per separator/prefix shape so the partial-prefix detection
+// can hold back the right tail length on stream chunks.
 const SENSITIVE_LITERALS = [
   '/tmp/windsurf-workspace',
   '/home/user/projects/workspace-',
+  '\\home\\user\\projects\\workspace-',
   '/opt/windsurf',
   _repoRoot,
 ];

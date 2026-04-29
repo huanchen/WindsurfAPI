@@ -39,6 +39,39 @@ describe('sanitizeText', () => {
     assert.equal(result, 'Editing … and …');
   });
 
+  // Issue #86 follow-up: oaskdosakdoakd reported `C:\home\user\projects\workspace-devinxse`
+  // leaking despite the Unix-only regex catching `/home/user/projects/workspace-skxwsx01`.
+  // The model (often GLM running on Windows clients) hallucinates Windows-prefixed
+  // forms of the workspace path. Defensive: cover backslash, drive prefix, and
+  // mixed separators.
+  it('redacts Windows-style workspace path with C: drive prefix', () => {
+    assert.equal(
+      sanitizeText('C:\\home\\user\\projects\\workspace-devinxse\\src\\index.js'),
+      '…'
+    );
+  });
+
+  it('redacts Windows-style workspace path with backslashes only', () => {
+    assert.equal(
+      sanitizeText('\\home\\user\\projects\\workspace-skxwsx01\\src\\index.js'),
+      '…'
+    );
+  });
+
+  it('redacts mixed-separator workspace path (drive prefix + forward slashes)', () => {
+    assert.equal(
+      sanitizeText('C:\\home/user/projects/workspace-devinxse/src/index.js'),
+      '…'
+    );
+  });
+
+  it('redacts lowercase-drive Windows workspace path', () => {
+    assert.equal(
+      sanitizeText('d:\\home\\user\\projects\\workspace-x12345\\file.txt'),
+      '…'
+    );
+  });
+
   it('returns non-strings unchanged', () => {
     assert.equal(sanitizeText(null), null);
     assert.equal(sanitizeText(undefined), undefined);
