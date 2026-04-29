@@ -11,6 +11,7 @@ import {
   buildSchemaCompactToolPreambleForProto,
   buildSkinnyToolPreambleForProto,
   normalizeMessagesForCascade,
+  pickToolDialect,
 } from '../src/handlers/tool-emulation.js';
 
 describe('ToolCallStreamParser', () => {
@@ -55,6 +56,122 @@ describe('ToolCallStreamParser', () => {
     const allCalls = [...r1.toolCalls, ...r2.toolCalls, ...r3.toolCalls];
     assert.equal(allCalls.length, 1);
     assert.equal(allCalls[0].name, 'Read');
+  });
+
+  it('handles GLM47 call split across chunks', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const r1 = parser.feed('<tool_call>Read<arg_key>file_path</arg_key>');
+    const r2 = parser.feed('<arg_value>README.md</arg_value></tool_call>');
+    const r3 = parser.flush();
+    const allCalls = [...r1.toolCalls, ...r2.toolCalls, ...r3.toolCalls];
+    assert.equal(allCalls.length, 1);
+    assert.equal(allCalls[0].name, 'Read');
+    assert.equal(JSON.parse(allCalls[0].argumentsJson).file_path, 'README.md');
+    assert.equal(r1.text + r2.text + r3.text, '');
+  });
+
+  it('parses GLM47 zero-arg <tool_call> block', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const r = parser.feed('<tool_call>pwd</tool_call>');
+    const flush = parser.flush();
+    const allCalls = [...r.toolCalls, ...flush.toolCalls];
+    assert.equal(allCalls.length, 1);
+    assert.equal(allCalls[0].name, 'pwd');
+    assert.equal(allCalls[0].argumentsJson, '{}');
+    assert.equal((r.text + flush.text).trim(), '');
+  });
+
+  it('parses GLM47 single-arg block with arg_key / arg_value format', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const input = '<tool_call>Read<arg_key>file_path</arg_key><arg_value>README.md</arg_value></tool_call>';
+    const r = parser.feed(input);
+    const flush = parser.flush();
+    const allCalls = [...r.toolCalls, ...flush.toolCalls];
+    assert.equal(allCalls.length, 1);
+    assert.equal(allCalls[0].name, 'Read');
+    assert.equal(JSON.parse(allCalls[0].argumentsJson).file_path, 'README.md');
+  });
+
+  it('parses GLM47 multi-arg block and number values', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const input = '<tool_call>Bash<arg_key>command</arg_key><arg_value>ls -la</arg_value><arg_key>timeout</arg_key><arg_value>5000</arg_value></tool_call>';
+    const { toolCalls } = parser.feed(input);
+    const flush = parser.flush();
+    const allCalls = [...toolCalls, ...flush.toolCalls];
+    assert.equal(allCalls.length, 1);
+    const parsedArgs = JSON.parse(allCalls[0].argumentsJson);
+    assert.equal(parsedArgs.command, 'ls -la');
+    assert.equal(parsedArgs.timeout, 5000);
+    assert.equal(typeof parsedArgs.timeout, 'number');
+  });
+
+  it('parses multiple GLM47 tool calls back-to-back', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const input = '<tool_call>Read<arg_key>file_path</arg_key><arg_value>README.md</arg_value></tool_call><tool_call>Bash<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>';
+    const { toolCalls } = parser.feed(input);
+    const flush = parser.flush();
+    const allCalls = [...toolCalls, ...flush.toolCalls];
+    assert.equal(allCalls.length, 2);
+    assert.equal(allCalls[0].name, 'Read');
+    assert.equal(allCalls[1].name, 'Bash');
+  });
+
+  it('parses Kimi K2 section-token tool_call format', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'kimi-k2-thinking' });
+    const input = '<|tool_calls_section_begin|><|tool_call_begin|>functions.Read:0<|tool_call_argument_begin|>{"file_path":"README.md"}<|tool_call_end|><|tool_calls_section_end|>';
+    const { toolCalls, text } = parser.feed(input);
+    const flush = parser.flush();
+    const allCalls = [...toolCalls, ...flush.toolCalls];
+    assert.equal(allCalls.length, 1);
+    assert.equal(allCalls[0].name, 'Read');
+    assert.equal(JSON.parse(allCalls[0].argumentsJson).file_path, 'README.md');
+    assert.equal(text + flush.text, '');
+  });
+
+  it('streams plain prose through GLM47 dialect when no tool tag arrives', () => {
+    // Regression: previously the GLM/Kimi paths buffered everything until
+    // flush(), so a non-tool prose response from GLM looked silent in SSE
+    // until end-of-stream. Now we emit text up to a hold-back tail so
+    // partial open tags still get caught on the next chunk.
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const r1 = parser.feed('Hello world ');
+    assert.equal(r1.text, 'Hello world ');
+    const r2 = parser.feed('and goodbye.');
+    assert.equal(r2.text, 'and goodbye.');
+    const f = parser.flush();
+    assert.equal(f.toolCalls.length, 0);
+  });
+
+  it('emits prefix text then parses GLM47 tool call from the same stream', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const r1 = parser.feed('Sure, reading the file. ');
+    assert.equal(r1.text, 'Sure, reading the file. ');
+    const r2 = parser.feed('<tool_call>Read<arg_key>file_path</arg_key><arg_value>x.md</arg_value></tool_call>');
+    // No more text should be emitted from feed (call is buffered until flush)
+    assert.equal(r2.text, '');
+    const f = parser.flush();
+    assert.equal(f.toolCalls.length, 1);
+    assert.equal(f.toolCalls[0].name, 'Read');
+  });
+
+  it('holds back partial GLM47 open-tag prefix at chunk boundary', () => {
+    const parser = new ToolCallStreamParser({ modelKey: 'glm-5.1' });
+    const r1 = parser.feed('Reading: <tool_ca');
+    // Should emit "Reading: " but hold "<tool_ca" in case the next chunk completes
+    assert.equal(r1.text, 'Reading: ');
+    const r2 = parser.feed('ll>pwd</tool_call>');
+    assert.equal(r2.text, '');
+    const f = parser.flush();
+    assert.equal(f.toolCalls.length, 1);
+    assert.equal(f.toolCalls[0].name, 'pwd');
+  });
+
+  it('picks GLM / Kimi / OpenAI dialects by model or provider', () => {
+    assert.equal(pickToolDialect('glm-5.1'), 'glm47');
+    assert.equal(pickToolDialect('kimi-k2-thinking'), 'kimi_k2');
+    assert.equal(pickToolDialect('gpt-4o'), 'openai_json_xml');
+    assert.equal(pickToolDialect(null, 'zhipu'), 'glm47');
+    assert.equal(pickToolDialect(null, 'moonshot'), 'kimi_k2');
   });
 
   it('emits text before and after tool calls', () => {
@@ -130,6 +247,15 @@ describe('parseToolCallsFromText', () => {
     assert.equal(toolCalls.length, 0);
     assert.equal(text, 'Just normal text');
   });
+
+  it('keeps legacy Gemimi-style XML format working', () => {
+    const input = '<tool_call>{"name":"Read","arguments":{"path":"README.md"}}</tool_call>';
+    const { text, toolCalls } = parseToolCallsFromText(input, { modelKey: 'gemini-2.5-flash' });
+    assert.equal(text, '');
+    assert.equal(toolCalls.length, 1);
+    assert.equal(toolCalls[0].name, 'Read');
+    assert.equal(JSON.parse(toolCalls[0].argumentsJson).path, 'README.md');
+  });
 });
 
 describe('buildToolPreamble (injection-guard safety)', () => {
@@ -202,6 +328,20 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     assert.equal(buildToolPreamble([]), '');
     assert.equal(buildToolPreamble([{ type: 'other' }]), '');
     assert.equal(buildToolPreamble([{ type: 'function' }]), '');
+  });
+
+  it('uses GLM47 arg_key/arg_value protocol in proto preamble', () => {
+    const glm = buildToolPreambleForProto(manyTools, 'auto', '', 'glm-5.1');
+    assert.ok(glm.includes('<arg_key>'));
+    assert.ok(glm.includes('<arg_value>'));
+    assert.ok(!glm.includes('"name":"'));
+  });
+
+  it('uses Kimi section-token protocol in proto preamble', () => {
+    const kimi = buildToolPreambleForProto(manyTools, 'auto', '', 'kimi-k2-thinking');
+    assert.ok(kimi.includes('<|tool_calls_section_begin|>'));
+    assert.ok(kimi.includes('<|tool_call_begin|>'));
+    assert.ok(kimi.includes('<|tool_call_end|>'));
   });
 
   it('adds Bash and Read argument fidelity rules only to the proto preamble', () => {
@@ -523,6 +663,65 @@ describe('normalizeMessagesForCascade (preamble placement regression)', () => {
     assert.ok(Array.isArray(out[0].content));
     assert.deepEqual(out[0].content[0], image);
     assert.equal(out[0].content[1].text, 'what is this?');
+  });
+
+  // Issue #86 follow-up: "上下文会丢" — when GLM/Kimi history was serialized
+  // back into the cascade in OpenAI-JSON-XML format, the next turn saw its own
+  // past tool calls in a foreign syntax and dropped the conversation thread.
+  it('serializes assistant tool_calls into GLM47 dialect for GLM history', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'read README' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_g1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"README.md"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_g1', content: 'README contents…' },
+        { role: 'user', content: 'next' },
+      ],
+      tools,
+      { modelKey: 'glm-5.1', provider: 'zhipu' },
+    );
+    const asst = out.find(m => m.role === 'assistant');
+    assert.ok(asst.content.includes('<arg_key>file_path</arg_key>'),
+      `expected GLM47 arg_key, got: ${asst.content}`);
+    assert.ok(asst.content.includes('<arg_value>README.md</arg_value>'));
+    assert.ok(!asst.content.includes('"name":"'),
+      'GLM history must not include OpenAI JSON-XML format');
+  });
+
+  it('serializes assistant tool_calls into Kimi K2 section tokens for Kimi history', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'read it' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_k1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"x.md"}' } },
+        ] },
+      ],
+      tools,
+      { modelKey: 'kimi-k2-thinking', provider: 'moonshot' },
+    );
+    const asst = out.find(m => m.role === 'assistant');
+    assert.ok(asst.content.includes('<|tool_call_begin|>Read:'));
+    assert.ok(asst.content.includes('<|tool_call_argument_begin|>'));
+    assert.ok(asst.content.includes('<|tool_calls_section_end|>'));
+  });
+
+  it('keeps OpenAI JSON-XML serializer for Anthropic/OpenAI/Gemini history', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'read it' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_a1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"x.md"}' } },
+        ] },
+      ],
+      tools,
+      { modelKey: 'claude-opus-4.7', provider: 'anthropic' },
+    );
+    const asst = out.find(m => m.role === 'assistant');
+    assert.ok(asst.content.includes('"name":"Read"'),
+      `expected JSON-XML, got: ${asst.content}`);
+    assert.ok(asst.content.includes('"file_path":"x.md"'));
+    assert.ok(!asst.content.includes('<arg_key>'));
   });
 });
 
