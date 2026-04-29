@@ -147,7 +147,20 @@ export function pickToolDialect(modelKey, provider) {
   const normalizedProvider = String(provider || '').toLowerCase();
   const normalizedModelKey = String(modelKey || '').toLowerCase();
   if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) return 'glm47';
-  if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) return 'kimi_k2';
+  if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) {
+    // The Kimi K2 vLLM dialect (`<|tool_calls_section_begin|>` ...) is
+    // verified working only against the original `kimi-k2` and
+    // `kimi-k2-thinking` SKUs. Newer Moonshot SKUs (`kimi-k2.5`,
+    // `kimi-k2-6`, ...) are served by a different runtime upstream
+    // that rejects vLLM markup with "The model produced an invalid
+    // tool call" (cookire's #102 reproduce). Default these to the
+    // OpenAI JSON-XML dialect — universally accepted and what the
+    // newer Moonshot models naturally emit.
+    if (normalizedModelKey === 'kimi-k2' || normalizedModelKey === 'kimi-k2-thinking') {
+      return 'kimi_k2';
+    }
+    return 'openai_json_xml';
+  }
   return 'openai_json_xml';
 }
 

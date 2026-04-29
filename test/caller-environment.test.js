@@ -125,6 +125,88 @@ describe('extractCallerEnvironment', () => {
     assert.equal(extractCallerEnvironment(undefined), '');
     assert.equal(extractCallerEnvironment('not an array'), '');
   });
+
+  // ───── #100 follow-up: bare-path fallback when no <env> block ─────
+  describe('bare-path cwd fallback (#100)', () => {
+    it('lifts a Windows path glued to Chinese text in the first user message', () => {
+      // Real yunduobaba prompt — no <env>, no separator between path and CJK.
+      const messages = [
+        { role: 'user', content: 'C:\\Users\\renfei\\Downloads\\WindsurfAPI-master\\WindsurfAPI-master分析下这个项目' },
+      ];
+      const out = extractCallerEnvironment(messages);
+      assert.equal(out, '- Working directory: C:\\Users\\renfei\\Downloads\\WindsurfAPI-master\\WindsurfAPI-master');
+    });
+
+    it('lifts a Unix path at the start of a user prompt', () => {
+      const messages = [
+        { role: 'user', content: '/home/user/projects/myproj 帮我分析' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /\/home\/user\/projects\/myproj/);
+    });
+
+    it('lifts a Mac /Users path with no separator', () => {
+      const messages = [
+        { role: 'user', content: '/Users/jane/code/app please review' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /\/Users\/jane\/code\/app/);
+    });
+
+    it('lifts a tilde path', () => {
+      const messages = [
+        { role: 'user', content: '~/dotfiles 看看这个' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /~\/dotfiles/);
+    });
+
+    it('rejects a path that ends in a common file extension (single-file reference)', () => {
+      const messages = [
+        { role: 'user', content: 'C:\\Users\\me\\notes.md 解释这个文件' },
+      ];
+      // The file path is a target, not a cwd. Should not lift.
+      assert.equal(extractCallerEnvironment(messages), '');
+    });
+
+    it('does NOT trigger when the canonical extractor already found cwd', () => {
+      // Bare-path fallback is a last-resort. If <env> already gave us cwd we use that.
+      const messages = [
+        { role: 'system', content: 'Working directory: /Users/dev/proj' },
+        { role: 'user', content: 'C:\\some\\windows\\path 分析' },
+      ];
+      const out = extractCallerEnvironment(messages);
+      assert.match(out, /\/Users\/dev\/proj/);
+      assert.doesNotMatch(out, /windows\\path/);
+    });
+
+    it('only scans the first user message (later assistant/tool replies do not count)', () => {
+      const messages = [
+        { role: 'user', content: 'no path here' },
+        { role: 'assistant', content: 'I see C:\\some\\path in some logs' },
+      ];
+      assert.equal(extractCallerEnvironment(messages), '');
+    });
+
+    it('only scans the leading 200 chars of a user message (mid-prose paths skipped)', () => {
+      const head = 'I have been wondering for a long time about a thing in the project that lives somewhere in my filesystem and I think it might be useful to look there. The path I have in mind is /home/user/proj but please confirm.';
+      assert.ok(head.length > 200);
+      const messages = [{ role: 'user', content: head }];
+      // The path appears past char 200 → fallback should NOT trigger.
+      assert.equal(extractCallerEnvironment(messages), '');
+    });
+
+    it('rejects too-short fragments like /a or C:\\', () => {
+      assert.equal(extractCallerEnvironment([{ role: 'user', content: '/a please look' }]), '');
+      assert.equal(extractCallerEnvironment([{ role: 'user', content: 'C:\\ open this' }]), '');
+    });
+
+    it('handles content-block array with a path in the first text block', () => {
+      const messages = [
+        { role: 'user', content: [
+          { type: 'text', text: 'D:\\Project\\WindsurfAPI 你看一下' },
+        ]},
+      ];
+      assert.match(extractCallerEnvironment(messages), /D:\\Project\\WindsurfAPI/);
+    });
+  });
 });
 
 describe('buildToolPreambleForProto with environment override', () => {

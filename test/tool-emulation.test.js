@@ -171,7 +171,24 @@ describe('ToolCallStreamParser', () => {
     assert.equal(pickToolDialect('kimi-k2-thinking'), 'kimi_k2');
     assert.equal(pickToolDialect('gpt-4o'), 'openai_json_xml');
     assert.equal(pickToolDialect(null, 'zhipu'), 'glm47');
-    assert.equal(pickToolDialect(null, 'moonshot'), 'kimi_k2');
+    // Bare provider="moonshot" with no specific model defaults to the
+    // openai dialect now (#102) — only the verified-working SKUs get
+    // the vLLM dialect.
+    assert.equal(pickToolDialect(null, 'moonshot'), 'openai_json_xml');
+  });
+
+  it('routes only original kimi-k2 / kimi-k2-thinking to vLLM dialect (#102 cookire)', () => {
+    // The Kimi K2 vLLM tool-call format only works on the SKUs we
+    // explicitly tested. Newer Moonshot models (kimi-k2.5, kimi-k2-6,
+    // ...) are served by a different runtime that rejects vLLM markup
+    // with cascade error "The model produced an invalid tool call".
+    assert.equal(pickToolDialect('kimi-k2'), 'kimi_k2');
+    assert.equal(pickToolDialect('kimi-k2-thinking'), 'kimi_k2');
+    // Newer SKUs default to openai_json_xml regardless of provider
+    assert.equal(pickToolDialect('kimi-k2.5'), 'openai_json_xml');
+    assert.equal(pickToolDialect('kimi-k2-6'), 'openai_json_xml');
+    assert.equal(pickToolDialect('kimi-k2.5', 'moonshot'), 'openai_json_xml');
+    assert.equal(pickToolDialect('kimi-k2-6', 'moonshot'), 'openai_json_xml');
   });
 
   it('emits text before and after tool calls', () => {

@@ -724,8 +724,67 @@ export function extractCallerEnvironment(messages) {
   // Sticking to the rule "no cwd → no block" both removes the noise and
   // lets the model learn cwd via its own `pwd` tool call (which already
   // works on every Anthropic-format client we have tested).
-  if (!seen.has('cwd')) return '';
+  if (!seen.has('cwd')) {
+    // #100 (yunduobaba) fallback — when the canonical extractors miss
+    // the cwd (some Claude Code forks / OpenCode variants don't emit
+    // a `<env>` block at all), scan the head of the first real user
+    // message for a bare absolute path. The user's prompt
+    //   "C:\Users\renfei\Downloads\WindsurfAPI-master 分析下这个项目"
+    // makes their intended workspace obvious — without this, cascade's
+    // built-in /tmp/windsurf-workspace prior wins and the model invents
+    // a JSON apology about Linux not being able to read Windows paths.
+    const cwd = scanUserMessageForBareCwd(messages);
+    if (cwd) return `- Working directory: ${cwd}`;
+    return '';
+  }
   return out.join('\n');
+}
+
+// Bare-path fallback for extractCallerEnvironment. Looks at the FIRST
+// user-role message only (so a path appearing inside an assistant or
+// tool reply later in the conversation doesn't override the original
+// intent), takes the leading 200 chars (paths users care about appear
+// near the top of a prompt, not buried mid-sentence), and matches one
+// of three explicit absolute-path shapes:
+//
+//   - Windows  C:\... or C:/...
+//   - Unix     /home/..., /Users/..., /var/..., etc.
+//   - Tilde    ~/projects/...
+//
+// The path-tail charset is restricted to ASCII filesystem characters
+// (alnum, `_`, `-`, `.`, `/`, `\`) so a CJK character or whitespace
+// terminates the match cleanly — matters for prompts where the path is
+// glued straight to Chinese text without a space ("C:\foo分析这个").
+//
+// File-extension reject: a path ending in a common file extension is
+// almost certainly the user pointing at a single file, not the cwd.
+// We could try dirname() it but the heuristic is shaky enough that we
+// rather miss than mis-attribute.
+function scanUserMessageForBareCwd(messages) {
+  if (!Array.isArray(messages)) return '';
+  const FILE_EXT = /\.(?:js|mjs|cjs|ts|tsx|jsx|json|jsonc|md|mdx|py|pyc|go|rs|java|kt|swift|cpp|cc|cxx|c|h|hpp|html?|css|scss|sass|less|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|fish|ps1|bat|cmd|exe|dll|so|dylib|zip|tar|gz|bz2|xz|7z|rar|png|jpe?g|gif|webp|svg|ico|mp[34]|wav|flac|ogg|webm|mov|avi|mkv|pdf|docx?|xlsx?|pptx?|csv|tsv|sql|db|sqlite|log|lock|map|min\.js|min\.css)$/i;
+  for (const m of messages) {
+    if (m?.role !== 'user') continue;
+    let content;
+    if (typeof m.content === 'string') content = m.content;
+    else if (Array.isArray(m.content)) content = m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n');
+    else continue;
+    if (!content) continue;
+    const head = content.slice(0, 300);
+    // Path MUST be the first non-trivial token in the message — anything
+    // else is too easy to misattribute (a path buried mid-prose is more
+    // likely a tool target than a cwd hint). Allow leading whitespace,
+    // ASCII/CJK punctuation, or opening quotes/brackets before the path.
+    const match = head.match(/^[\s,;:.，。、；：　"'`(\[]*((?:[A-Za-z]:[\\/]|\/[A-Za-z]|~[\\/])[A-Za-z0-9._\\/-]+)/);
+    if (!match) continue;
+    const cand = match[1];
+    if (cand.length < 4) continue;
+    if (FILE_EXT.test(cand)) continue;
+    // Reject lone roots like "/a" or "C:\" — too short to be a meaningful cwd.
+    if (cand.length < 5) continue;
+    return cand;
+  }
+  return '';
 }
 
 // Rough token estimate (~4 chars/token). Used only to populate the
@@ -1388,6 +1447,14 @@ export async function handleChatCompletions(body, context = {}) {
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
     if (result.reuseEntryInvalid) reuseEntryDead = true;
+    // #101: same upstream-timeout invalidation as the stream path —
+    // see the matching catch block in streamResponse for the full
+    // rationale (cascade trajectory left half-broken, next reuse hits
+    // it and the model "loses" the prior conversation).
+    const _resultMsg = String(result.body?.error?.message || '');
+    if (/context deadline exceeded|context cancellation while reading body|client\.timeout/i.test(_resultMsg)) {
+      reuseEntryDead = true;
+    }
     lastErr = result;
     const errType = result.body?.error?.type;
     // Rate limit: this account is done for this model, try the next one
@@ -2136,6 +2203,20 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // recover from a "cascade not found" but couldn't. The entry
             // we held is dead — never restore it on the way out.
             if (err.reuseEntryInvalid) reuseEntryDead = true;
+            // #101 (nalayahfowlkest-ship-it): when the upstream model
+            // provider times out mid-stream ("context deadline exceeded"
+            // / "Client.Timeout or context cancellation while reading
+            // body"), the cascade trajectory is left in an inconsistent
+            // state — the assistant never finished, but the prior
+            // tool_result is still in there. Restoring this cascade to
+            // the pool causes the NEXT request to reuse a half-broken
+            // trajectory, and the model only sees the trailing tool
+            // result with no earlier user prompts ("I can see the
+            // content from a previous tool call ... but I don't have
+            // the earlier conversation context").
+            if (/context deadline exceeded|context cancellation while reading body|client\.timeout/i.test(err.message || '')) {
+              reuseEntryDead = true;
+            }
             const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
             const isInternal = /internal error occurred.*error id/i.test(err.message);
