@@ -380,11 +380,24 @@ function isToolSensitiveOpusModel(modelKey = '') {
   return /^claude-opus-4(?:[.-]6|[.-]7)(?:[-.]|$)/i.test(String(modelKey || ''));
 }
 
+function isSonnet46ToolReuseDisabled() {
+  return process.env.WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE === '1';
+}
+
+function isSonnet46Model(modelKey = '') {
+  return /^claude-sonnet-4(?:[.-]6)(?:[-.]|$)/i.test(String(modelKey || ''));
+}
+
+export function isToolEmulatedReusableModel(modelKey = '') {
+  if (isToolSensitiveOpusModel(modelKey)) return true;
+  return !isSonnet46ToolReuseDisabled() && isSonnet46Model(modelKey);
+}
+
 // Tool-emulated requests are normally kept out of cascade_id reuse because
-// <tool_call>/<tool_result> bodies drift across turns. Opus 4.6 / 4.7 +
-// Claude Code is the exception: replaying the full prompt/tools/image
-// history is worse than preserving the exact upstream cascade, so enable
-// a narrow local path.
+// <tool_call>/<tool_result> bodies drift across turns. Opus 4.6 / 4.7 and
+// Sonnet 4.6 + Claude Code are the exceptions: replaying the full
+// prompt/tools/image history is worse than preserving the exact upstream
+// cascade, so enable a narrow local path.
 // thinking.type can be 'enabled' (Anthropic spec), 'adaptive' (what
 // Claude Code 2.x sonnet defaults to), or any future variant — accept
 // anything that isn't an explicit 'disabled' so the model still gets
@@ -418,11 +431,11 @@ export function resolveEffectiveModelKey(modelKey, wantThinking) {
 export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allowToolReuse = OPUS47_TOOL_EMULATED_REUSE }) {
   if (!useCascade) return false;
   if (!emulateTools) return true;
-  return !!allowToolReuse && isToolSensitiveOpusModel(modelKey);
+  return !!allowToolReuse && isToolEmulatedReusableModel(modelKey);
 }
 
 function shouldForceCascadeReuse({ emulateTools, modelKey }) {
-  return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isToolSensitiveOpusModel(modelKey);
+  return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isToolEmulatedReusableModel(modelKey);
 }
 
 export function shouldUseStrictCascadeReuse({ emulateTools, modelKey, strict = CASCADE_REUSE_STRICT, allowOpus47Strict = OPUS47_STRICT_REUSE }) {
