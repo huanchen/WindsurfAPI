@@ -274,6 +274,19 @@ async function fetchCheckUserLoginMethod(email, fingerprint, proxy) {
       log.warn(`CheckUserLoginMethod non-200 (${res.status}): ${JSON.stringify(res.data || '').slice(0, 120)}`);
       return null;
     }
+    // Empirically (2026-04-29) the Vercel function will sometimes serve
+    // an empty `{}` for valid emails — likely a cache miss / cold-start
+    // edge or geo-routing fallback. Treating `userExists`/`hasPassword`
+    // as false in that case wrongly funnels every account into the
+    // "no password set" branch and aborts before any login attempt.
+    // When neither field is present, defer to the legacy connections
+    // endpoint instead of guessing.
+    const hasUserField = Object.prototype.hasOwnProperty.call(res.data, 'userExists');
+    const hasPwField = Object.prototype.hasOwnProperty.call(res.data, 'hasPassword');
+    if (!hasUserField && !hasPwField) {
+      log.warn(`CheckUserLoginMethod empty body for ${email}, falling back to /_devin-auth/connections`);
+      return null;
+    }
     if (res.data.userExists === false) {
       // Caller maps this to "user not found" via interpretConnections{method:null}.
       return { method: null, hasPassword: false, raw: res.data };

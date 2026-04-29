@@ -301,11 +301,40 @@ export async function addAccountByToken(token, label = '') {
 }
 
 /**
- * Add account via email/password is not supported for direct Firebase login.
- * Use token-based auth instead: get a token from windsurf.com/show-auth-token
+ * Add account via email/password.
+ *
+ * Reuses the same Windsurf login pipeline the dashboard's
+ * `processWindsurfLogin` uses: probe Auth1 vs Firebase via
+ * CheckUserLoginMethod (with /_devin-auth/connections fallback), then
+ * register a Codeium api_key. Refresh token (Firebase path) is persisted
+ * so the background renewal loop in checkAndRefreshTokens picks it up.
  */
 export async function addAccountByEmail(email, password) {
-  throw new Error('Direct email/password login is not supported. Use token-based auth: get token from windsurf.com, then POST /auth/login {"token":"..."}');
+  if (!email || !password) {
+    throw new Error('email and password required');
+  }
+  const { windsurfLogin } = await import('./dashboard/windsurf-login.js');
+  const result = await windsurfLogin(email, password, null);
+  if (!result?.apiKey) {
+    throw new Error('Login succeeded but no apiKey returned');
+  }
+  const account = addAccountByKey(result.apiKey, result.name || email);
+  if (account.email !== (result.name || email)) {
+    account.email = result.name || email;
+  }
+  account.method = 'email';
+  if (result.apiServerUrl && !account.apiServerUrl) {
+    account.apiServerUrl = result.apiServerUrl;
+  }
+  if (result.refreshToken || result.idToken) {
+    setAccountTokens(account.id, {
+      refreshToken: result.refreshToken || '',
+      idToken: result.idToken || '',
+    });
+  }
+  saveAccounts();
+  log.info(`Account added via email: ${account.id} (${account.email})`);
+  return account;
 }
 
 /**
