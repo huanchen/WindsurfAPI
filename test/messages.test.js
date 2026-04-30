@@ -500,31 +500,70 @@ describe('Anthropic messages request translation', () => {
     ]), []);
   });
 
-  it('adds JSON-only guidance for clients that ask for JSON in text', () => {
-    const messages = applyJsonResponseHint([
-      { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
-    ]);
+  it('adds JSON-only guidance via a system message only (no user-content append)', () => {
+    // Earlier behavior also appended the hint to the latest user turn,
+    // which polluted the cascade reuse trajectory upstream and caused
+    // every follow-up turn to inherit JSON-only mode (#104). The fix is
+    // to inject ONLY a system message — it's authoritative for cascade
+    // routing and isn't persisted in the conversation history.
+    const original = { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' };
+    const messages = applyJsonResponseHint([original]);
 
+    assert.equal(messages[0].role, 'system');
     assert.match(messages[0].content, /Respond with valid JSON only/);
-    assert.match(messages.at(-1).content, /single parseable JSON object/);
-    assert.match(messages.at(-1).content, /Preserve the exact JSON field names requested/);
-    assert.match(messages.at(-1).content, /do not add extra fields/);
-    assert.match(messages.at(-1).content, /copying the full tool result/);
+    assert.match(messages[0].content, /Preserve the exact JSON field names requested/);
+    assert.match(messages[0].content, /copying the full tool result/);
+
+    // The user message must be unchanged byte-for-byte. Anything appended
+    // here will leak into the cascade upstream's stored trajectory and
+    // contaminate later turns that don't ask for JSON.
+    assert.equal(messages[1].role, 'user');
+    assert.equal(messages[1].content, original.content,
+      'applyJsonResponseHint must not modify user content (cascade trajectory pollution, #104)');
   });
 
-  it('keeps JSON-only guidance on the latest real user turn when the current turn is a tool_result', () => {
+  it('does not modify user content even when later turns are tool_results', () => {
+    const userMsg = { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' };
+    const toolMsg = { role: 'tool', tool_call_id: 'toolu_1', content: '{"name":"windsurf-api","version":"2.0.11"}' };
     const messages = applyJsonResponseHint([
-      { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
+      userMsg,
       { role: 'assistant', content: '', tool_calls: [
         { id: 'toolu_1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"package.json"}' } },
       ] },
-      { role: 'tool', tool_call_id: 'toolu_1', content: '{"name":"windsurf-api","version":"2.0.11"}' },
+      toolMsg,
     ]);
 
-    const realUser = messages.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('Read package.json'));
+    const realUser = messages.find(m => m.role === 'user');
     const toolResult = messages.find(m => m.role === 'tool');
-    assert.match(realUser.content, /single parseable JSON object/);
-    assert.doesNotMatch(toolResult.content, /single parseable JSON object/);
+    assert.equal(realUser.content, userMsg.content, 'user content must remain pristine');
+    assert.equal(toolResult.content, toolMsg.content, 'tool content must remain pristine');
+    // System message carries the JSON guidance instead.
+    assert.match(messages[0].content, /Respond with valid JSON only/);
+  });
+
+  it('does not contaminate the cascade trajectory across turns (regression for #104)', () => {
+    // The bug: turn-1 says "respond in JSON only", proxy appends the
+    // JSON-only suffix to turn-1 user content, cascade upstream stores
+    // it in trajectory; turn-2 reuses the cascade for a plain "你好"
+    // greeting — and gets back `{"reply":"你好"}` because the upstream
+    // still sees the JSON-only instruction in the prior user turn.
+    //
+    // After the fix, applyJsonResponseHint only touches the system
+    // message. Building a turn-2 message list from the original (un-
+    // hinted) user content + a new user turn must contain ZERO trace
+    // of the JSON-only instruction.
+    const turn1User = { role: 'user', content: 'Answer only compact JSON with name and version.' };
+    const turn1Hinted = applyJsonResponseHint([turn1User]);
+
+    // Simulate what a caller would store in conversation history: the
+    // original user message, NOT the hinted one. (The proxy hands the
+    // hinted version to upstream but the conversation history feeds
+    // back the original.) The user content in the hinted list must
+    // equal the original — that's the invariant.
+    const userInHinted = turn1Hinted.find(m => m.role === 'user');
+    assert.equal(userInHinted.content, turn1User.content);
+    assert.doesNotMatch(userInHinted.content, /JSON only/i,
+      'user content must not carry the JSON-only instruction into the next turn');
   });
 
   it('projects final JSON onto requested keys using tool results when the model drifts', () => {

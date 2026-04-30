@@ -32,15 +32,19 @@ describe('thinking sibling routing', () => {
     assert.notEqual(getModelInfo(effective)?.modelUid, 'claude-opus-4-7-medium-thinking');
   });
 
-  it('checks model access against the effective thinking model', async () => {
+  it('inherits allowlist entitlement from base to -thinking variant (#103)', async () => {
+    // The dashboard UX shows base model names like `claude-sonnet-4.6`.
+    // A user who allowlists that should not get a 403 the moment the
+    // request resolves to the `-thinking` UID — they have no obvious
+    // way to discover that variant exists, so the inheritance is the
+    // expected behavior. (Pre-#103 fix: this returned `model_blocked`.)
     setModelAccessMode('allowlist');
     setModelAccessList(['claude-sonnet-4.6']);
 
     const result = await handleChatCompletions(thinkingRequest());
 
-    assert.equal(result.status, 403);
-    assert.equal(result.body?.error?.type, 'model_blocked');
-    assert.match(result.body?.error?.message || '', /claude-sonnet-4\.6-thinking/);
+    assert.notEqual(result.body?.error?.type, 'model_blocked',
+      'allowlisting the base must auto-allow the -thinking sibling');
   });
 
   it('allows base+reasoning when the thinking sibling is allowlisted', async () => {
@@ -49,7 +53,6 @@ describe('thinking sibling routing', () => {
 
     const result = await handleChatCompletions(thinkingRequest());
 
-    assert.equal(result.status, 403);
     assert.notEqual(result.body?.error?.type, 'model_blocked');
   });
 });

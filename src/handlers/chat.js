@@ -179,7 +179,7 @@ function textFromMessageContent(content) {
 
 export function extractRequestedJsonKeys(messages) {
   if (!Array.isArray(messages)) return [];
-  const text = latestRealUserText(messages)?.split('\n\n[You MUST respond with valid JSON only.')[0] || '';
+  const text = latestRealUserText(messages) || '';
   if (!text) return [];
   const match = text.match(/\b(?:exact\s+)?keys\s+([A-Za-z_$][\w$-]*(?:\s*,\s*[A-Za-z_$][\w$-]*)*(?:\s+(?:and|&)\s+(?!no\b)[A-Za-z_$][\w$-]*)?)/i);
   if (!match) return [];
@@ -211,12 +211,6 @@ export function isExplicitJsonRequested(messages) {
   if (/\bJSON\s+(?:object|only|format)\b/i.test(text)) return true;
   if (/\b(?:answer|respond|return|output)\s+only\s+(?:with\s+)?(?:valid\s+)?JSON\b/i.test(text)) return true;
   return false;
-}
-
-function appendJsonHintToContent(content, hint) {
-  if (typeof content === 'string') return content + hint;
-  if (Array.isArray(content)) return [...content, { type: 'text', text: hint }];
-  return content;
 }
 
 function plainObject(v) {
@@ -330,22 +324,21 @@ export function stabilizeJsonPayload(text, messages) {
 }
 
 export function applyJsonResponseHint(messages, responseFormat) {
-  let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object. Preserve the exact JSON field names requested by the user, and do not add extra fields when an exact key set is requested. If tool results contain the requested values, put only those values into JSON fields rather than describing them in prose or copying the full tool result.';
+  // Inject ONLY a system message. Earlier versions also appended a long
+  // "[You MUST respond with valid JSON only ...]" suffix to the latest
+  // user turn's content, but that bled into the cascade reuse trajectory
+  // upstream — every follow-up turn on the same conversation inherited
+  // the JSON-only instruction even when the new turn never asked for
+  // JSON, producing things like `{"reply":"你好"}` for a plain greeting
+  // (#104). The system message is more authoritative for cascade routing
+  // anyway, and is regenerated per request rather than persisted in the
+  // conversation history, so it gets the work done without contaminating
+  // the trajectory.
+  let sysContent = 'Respond with valid JSON only. No markdown, no code fences, no explanation. Output must be parseable by JSON.parse(). Preserve the exact JSON field names requested by the user, and do not add extra fields when an exact key set is requested. If tool results contain the requested values, put only those values into JSON fields rather than describing them in prose or copying the full tool result.';
   if (responseFormat?.type === 'json_schema' && responseFormat?.json_schema?.schema) {
-    jsonHint += ' Conform to this JSON Schema:\n' + JSON.stringify(responseFormat.json_schema.schema);
+    sysContent += ' Conform to this JSON Schema:\n' + JSON.stringify(responseFormat.json_schema.schema);
   }
-  jsonHint += ']';
-
-  const sysJsonMsg = { role: 'system', content: 'Respond with valid JSON only. No markdown, no code fences, no explanation. Output must be parseable by JSON.parse().' };
-  const out = [sysJsonMsg, ...(Array.isArray(messages) ? messages : [])];
-  for (let i = out.length - 1; i >= 1; i--) {
-    if (out[i]?.role !== 'user') continue;
-    const text = textFromMessageContent(out[i].content);
-    if (/^\s*<tool_result\b/i.test(text)) continue;
-    out[i] = { ...out[i], content: appendJsonHintToContent(out[i].content, jsonHint) };
-    break;
-  }
-  return out;
+  return [{ role: 'system', content: sysContent }, ...(Array.isArray(messages) ? messages : [])];
 }
 
 const CASCADE_REUSE_STRICT = process.env.CASCADE_REUSE_STRICT === '1';
