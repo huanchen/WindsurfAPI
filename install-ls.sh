@@ -50,21 +50,30 @@ log "Target:   $TARGET"
 
 mkdir -p "$(dirname "$TARGET")"
 
+# Write to a sibling tmp file then atomic-rename onto the target. If the
+# target is currently being executed (LS process has it mmap'd as the
+# program text), Linux refuses an in-place open(O_WRONLY|O_TRUNC) with
+# ETXTBSY ("file busy"). A rename(2), by contrast, just swaps the dirent
+# pointer to a new inode — running processes keep their old inode and
+# we get a fresh binary in place for the next exec.
+TMP_TARGET="${TARGET}.new.$$"
+trap 'rm -f "$TMP_TARGET"' EXIT
+
 if [[ $# -gt 0 && "$1" == "--file" && -n "${2:-}" ]]; then
   log "Installing from local file: $2"
-  cp -f "$2" "$TARGET"
+  cp -f "$2" "$TMP_TARGET"
 elif [[ $# -gt 0 && "$1" != "--url" && "$1" != "--file" && -f "$1" ]]; then
   log "Installing from local file: $1"
-  cp -f "$1" "$TARGET"
+  cp -f "$1" "$TMP_TARGET"
 elif [[ $# -ge 2 && "$1" == "--url" ]]; then
   url="$2"
   log "Downloading from: $url"
-  curl -fL --progress-bar -o "$TARGET" "$url"
+  curl -fL --progress-bar -o "$TMP_TARGET" "$url"
 else
   # Try our own GitHub release first (newer than Exafunction)
   our_url="${OUR_RELEASE}/${ASSET}"
   log "Trying WindsurfAPI release: $our_url"
-  if curl -fL --progress-bar -o "$TARGET" "$our_url" 2>/dev/null; then
+  if curl -fL --progress-bar -o "$TMP_TARGET" "$our_url" 2>/dev/null; then
     log "Downloaded from WindsurfAPI release"
   else
     log "Not found in our release, falling back to Exafunction..."
@@ -83,11 +92,13 @@ else
       exit 1
     fi
     log "Downloading: $url"
-    curl -fL --progress-bar -o "$TARGET" "$url"
+    curl -fL --progress-bar -o "$TMP_TARGET" "$url"
   fi
 fi
 
-chmod +x "$TARGET"
+chmod +x "$TMP_TARGET"
+mv -f "$TMP_TARGET" "$TARGET"
+trap - EXIT
 size="$(du -h "$TARGET" | cut -f1)"
 if command -v sha256sum >/dev/null 2>&1; then
   sha="$(sha256sum "$TARGET" | cut -c1-16)"

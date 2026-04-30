@@ -2580,10 +2580,22 @@ const App = {
   },
 
   // ─── Overview ────────────────────────────────
-  showSelfUpdateUnavailable(status, apply) {
+  showSelfUpdateUnavailable(status, apply, response) {
+    // The standard hint always works (run `docker compose pull && up -d`
+    // on the host). When docker mode also reported a reason — e.g. the
+    // user has docker.sock mounted but the container wasn't started by
+    // compose — surface that detail too so they know how to opt in.
+    const dockerHintParts = [];
+    if (response && response.dockerReason && response.dockerReason !== 'no-docker-sock') {
+      dockerHintParts.push(I18n.t('status.dockerSelfUpdateBlocked', {
+        reason: this.esc(response.dockerReason),
+        detail: this.esc(response.dockerDetail || ''),
+      }));
+    }
     status.innerHTML = `
       <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.selfUpdateUnavailable')}</div>
-      <div class="text-sm text-muted">${I18n.t('status.selfUpdateDockerHint')}</div>`;
+      <div class="text-sm text-muted">${I18n.t('status.selfUpdateDockerHint')}</div>
+      ${dockerHintParts.join('')}`;
     if (apply) {
       apply.classList.add('hidden');
       apply.disabled = true;
@@ -2601,7 +2613,7 @@ const App = {
       const r = await this.api('GET', '/self-update/check');
       if (!r.ok) {
         if (r.error === 'ERR_SELF_UPDATE_UNAVAILABLE') {
-          this.showSelfUpdateUnavailable(status, apply);
+          this.showSelfUpdateUnavailable(status, apply, r);
           return;
         }
         if (/not a git repository/i.test(r.error || '')) {
@@ -2613,6 +2625,22 @@ const App = {
         }
         throw new Error(this.translateError(r.error, 'error.apiError'));
       }
+      if (r.mode === 'docker') {
+        // Git mode unavailable but docker.sock is mounted — backend will
+        // pull the image and spawn a deployer sidecar to recreate this
+        // container in place. Show a "ready to apply" prompt instead of
+        // the git diff card.
+        status.innerHTML = `
+          <div style="color:var(--accent);font-weight:600;margin-bottom:6px">${I18n.t('status.dockerReady')}</div>
+          <div class="text-sm" style="display:grid;gap:3px">
+            <div>${I18n.t('status.dockerImage')} <code>${this.esc(r.image || '')}</code></div>
+            <div>${I18n.t('status.dockerProject')} <code>${this.esc(r.project || '')}</code></div>
+          </div>`;
+        apply.classList.remove('hidden');
+        apply.dataset.mode = 'docker';
+        return;
+      }
+      apply.dataset.mode = 'git';
       if (r.behind) {
         status.innerHTML = `
           <div style="color:var(--accent);font-weight:600;margin-bottom:6px">${I18n.t('status.updateAvailable')}</div>
@@ -2655,9 +2683,20 @@ const App = {
         }
         r = await this.api('POST', '/self-update', { forceReset: true });
       }
+      if (r.mode === 'docker') {
+        if (!r.ok) {
+          throw new Error(this.translateError(r.detail || r.reason, 'error.updateFailed'));
+        }
+        const delaySec = r.delaySeconds || 8;
+        status.innerHTML = `
+          <div style="color:var(--success);font-weight:600;margin-bottom:6px">${I18n.t('status.dockerUpdating', { image: this.esc(r.image || ''), delay: delaySec })}</div>
+          <div class="text-sm text-muted">${I18n.t('status.dockerSidecarStarted', { id: this.esc(r.deployerId || '') })}</div>`;
+        setTimeout(() => location.reload(), (delaySec + 4) * 1000);
+        return;
+      }
       if (!r.ok) {
         if (r.error === 'ERR_SELF_UPDATE_UNAVAILABLE') {
-          this.showSelfUpdateUnavailable(status, apply);
+          this.showSelfUpdateUnavailable(status, apply, r);
           return;
         }
         throw new Error(this.translateError(r.error, 'error.updateFailed'));

@@ -31,6 +31,17 @@ services:
       - ./.docker-data/data:/data
       - ./.docker-data/opt/windsurf:/opt/windsurf
       - ./.docker-data/tmp/windsurf-workspace:/tmp/windsurf-workspace
+      # Optional: mount the docker socket to enable in-dashboard one-click
+      # updates for docker deployments. With this mount the dashboard's
+      # "Check for update" button can pull the latest image AND trigger
+      # `docker compose up -d` to recreate the container — no manual
+      # SSH/exec needed. SECURITY: a process with access to docker.sock
+      # is effectively root on the host (it can spawn privileged
+      # containers, mount any path, etc.). Only enable on machines where
+      # the dashboard is locked down (DASHBOARD_PASSWORD set, not exposed
+      # publicly without a strong API_KEY). Leave commented for the
+      # default secure-by-default deployment.
+      # - /var/run/docker.sock:/var/run/docker.sock
     # Default to a single replica. Each replica keeps its own in-memory
     # response cache, cascade reuse pool, runtime-config, and model-access
     # list — those are NOT yet shared. Multi-replica is opt-in:

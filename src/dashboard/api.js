@@ -29,6 +29,7 @@ import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
 import { validateHostFormat } from '../net-safety.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
+import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
 
 export function parseProxyUrl(proxy) {
   const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
@@ -211,10 +212,31 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/self-update/check' && method === 'GET') {
     try {
       const info = await gitStatus();
-      return json(res, 200, { ok: true, ...info });
+      return json(res, 200, { ok: true, mode: 'git', ...info });
     } catch (err) {
       if (isSelfUpdateUnavailableError(err)) {
-        return json(res, 200, { ok: false, available: false, reason: err.reason, error: err.code });
+        // Git path is unavailable (most often docker). Fall back to
+        // docker self-update via /var/run/docker.sock if the user
+        // mounted it into the container; otherwise report the same
+        // "manual command" hint we did before.
+        const docker = await detectDockerSelfUpdate();
+        if (docker.available) {
+          return json(res, 200, {
+            ok: true,
+            mode: 'docker',
+            image: docker.image,
+            project: docker.project,
+            workingDir: docker.workingDir,
+          });
+        }
+        return json(res, 200, {
+          ok: false,
+          available: false,
+          reason: err.reason,
+          error: err.code,
+          dockerReason: docker.reason,
+          dockerDetail: docker.detail,
+        });
       }
       return json(res, 200, { ok: false, error: err.message });
     }
@@ -274,7 +296,24 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       });
     } catch (err) {
       if (isSelfUpdateUnavailableError(err)) {
-        return json(res, 200, { ok: false, available: false, reason: err.reason, error: err.code });
+        // Same fallback as /self-update/check: when git is unavailable
+        // (docker), try the docker socket path. The dashboard may already
+        // have called /self-update/check first and routed the user
+        // straight to a docker-mode confirmation, but supporting fallback
+        // here too keeps `POST /self-update` self-contained for scripts.
+        const docker = await detectDockerSelfUpdate();
+        if (docker.available) {
+          const result = await runDockerSelfUpdate();
+          return json(res, 200, { mode: 'docker', ...result });
+        }
+        return json(res, 200, {
+          ok: false,
+          available: false,
+          reason: err.reason,
+          error: err.code,
+          dockerReason: docker.reason,
+          dockerDetail: docker.detail,
+        });
       }
       return json(res, 200, { ok: false, error: err.message });
     }

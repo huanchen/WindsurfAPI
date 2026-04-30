@@ -90,11 +90,15 @@ describe('Docker self-update unavailable state', () => {
     await handleDashboardApi('GET', '/self-update/check', {}, { headers: {} }, res);
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.json(), {
-      ok: false,
-      available: false,
-      reason: 'docker',
-      error: 'ERR_SELF_UPDATE_UNAVAILABLE',
-    });
+    const body = res.json();
+    // Pin only the load-bearing fields. v2.0.41 added dockerReason /
+    // dockerDetail diagnostics when docker self-update is also
+    // unavailable (no docker.sock mount, etc.) — they're informational
+    // and the dashboard surfaces them as a help hint, but the dashboard
+    // routing logic only cares about ok / available / reason.
+    assert.equal(body.ok, false);
+    assert.equal(body.available, false);
+    assert.equal(body.reason, 'docker');
+    assert.equal(body.error, 'ERR_SELF_UPDATE_UNAVAILABLE');
   });
 });
