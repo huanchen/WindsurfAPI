@@ -3,7 +3,8 @@
  * Persisted to model-access.json.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { writeJsonAtomic } from '../fs-atomic.js';
 import { join } from 'path';
 import { config, log } from '../config.js';
 
@@ -26,7 +27,7 @@ try {
 
 function save() {
   try {
-    writeFileSync(ACCESS_FILE, JSON.stringify(_config, null, 2));
+    writeJsonAtomic(ACCESS_FILE, _config);
   } catch (e) {
     log.error('Failed to save model-access.json:', e.message);
   }

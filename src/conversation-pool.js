@@ -382,12 +382,20 @@ export function checkout(fingerprint, callerKey = '', expected = null) {
   if (!fingerprint) { stats.misses++; return null; }
   const entry = _pool.get(fingerprint);
   if (!entry) { stats.misses++; return null; }
-  _pool.delete(fingerprint);
+
+  // Validate BEFORE removing from the pool. The previous order
+  // (`delete` first, then check) had a subtle leak: when a caller's
+  // request fingerprinted the same as someone else's (different
+  // callerKey) we deleted the rightful owner's entry on the way to
+  // returning null, so the legitimate caller lost their cascade
+  // resume forever. Keep the entry in place on mismatch so the
+  // owner's next turn still finds it.
   if (entry.callerKey && callerKey && entry.callerKey !== callerKey) {
     stats.misses++;
     return null;
   }
   if (Date.now() - entry.lastAccess > effectiveTtl(entry)) {
+    _pool.delete(fingerprint);
     stats.expired++;
     stats.misses++;
     return null;
@@ -400,6 +408,9 @@ export function checkout(fingerprint, callerKey = '', expected = null) {
       return null;
     }
   }
+
+  // Validated. Now remove and hand to the caller.
+  _pool.delete(fingerprint);
   stats.hits++;
   return entry;
 }

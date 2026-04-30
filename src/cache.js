@@ -63,9 +63,23 @@ function normalize(body) {
   };
 }
 
-export function cacheKey(body) {
+/**
+ * Build a cache key for a chat request.
+ *
+ * `callerKey` is required to scope the cache to the specific upstream
+ * tenant — earlier versions hashed only the request body, which let one
+ * caller's "hi" return another caller's cached response from the same
+ * model. Pass an empty string only for tests; production callers must
+ * thread the request's authenticated callerKey through.
+ *
+ * Implementation note: prefix the JSON with the caller scope and a
+ * separator so two distinct callers can't collide by crafting bodies
+ * that serialize to identical strings.
+ */
+export function cacheKey(body, callerKey = '') {
+  const scope = String(callerKey || '');
   const json = JSON.stringify(normalize(body));
-  return createHash('sha256').update(json).digest('hex');
+  return createHash('sha256').update(scope).update('\0').update(json).digest('hex');
 }
 
 export function cacheGet(key) {

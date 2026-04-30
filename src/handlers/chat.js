@@ -1237,7 +1237,7 @@ export async function handleChatCompletions(body, context = {}) {
 
   const chatId = genId();
   const created = Math.floor(Date.now() / 1000);
-  const ckey = cacheKey(body);
+  const ckey = cacheKey(body, callerKey);
 
   if (stream) {
     return streamResponse(

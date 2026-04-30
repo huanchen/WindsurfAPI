@@ -3,7 +3,8 @@
  * Supports per-account and global HTTP proxy settings.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { writeJsonAtomic } from '../fs-atomic.js';
 import { join } from 'path';
 import { config, log } from '../config.js';
 
@@ -25,7 +26,7 @@ try {
 
 function save() {
   try {
-    writeFileSync(PROXY_FILE, JSON.stringify(_config, null, 2));
+    writeJsonAtomic(PROXY_FILE, _config);
   } catch (e) {
     log.error('Failed to save proxy.json:', e.message);
   }

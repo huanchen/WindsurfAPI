@@ -7,7 +7,8 @@
  * that needs a restart should stay in config.js / .env.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { writeJsonAtomic } from './fs-atomic.js';
 import { resolve } from 'path';
 import { config, log } from './config.js';
 
@@ -66,7 +67,7 @@ function load() {
 
 function persist() {
   try {
-    writeFileSync(FILE, JSON.stringify(_state, null, 2));
+    writeJsonAtomic(FILE, _state);
   } catch (e) {
     log.warn(`runtime-config: failed to persist: ${e.message}`);
   }

@@ -2,7 +2,8 @@
  * Request statistics collector with debounced JSON persistence.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { writeJsonAtomic } from '../fs-atomic.js';
 import { join } from 'path';
 import { config } from '../config.js';
 
@@ -32,7 +33,7 @@ function scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
     try {
-      writeFileSync(STATS_FILE, JSON.stringify(_state, null, 2));
+      writeJsonAtomic(STATS_FILE, _state);
     } catch {}
   }, 5000);
 }
