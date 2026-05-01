@@ -13,6 +13,10 @@ import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 export { VERSION, BRAND };
 
+export function shouldBootstrapDefaultLs(globalProxy) {
+  return !(globalProxy && globalProxy.host);
+}
+
 function workspaceBase() {
   const tmpDir = process.env.TEMP || process.env.TMP || tmpdir();
   const suffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
@@ -90,17 +94,23 @@ async function main() {
   if (existsSync(binaryPath)) {
     resetWorkspace();
 
-    await startLanguageServer({
-      binaryPath,
-      port: config.lsPort,
-      apiServerUrl: config.codeiumApiUrl,
-    });
+    const { getProxyConfig } = await import('./dashboard/proxy-config.js');
+    const bootstrapGlobalProxy = getProxyConfig().global || null;
+    if (shouldBootstrapDefaultLs(bootstrapGlobalProxy)) {
+      await startLanguageServer({
+        binaryPath,
+        port: config.lsPort,
+        apiServerUrl: config.codeiumApiUrl,
+      });
 
-    try {
-      await waitForReady(15000);
-    } catch (err) {
-      log.error(`Language server failed to start: ${err.message}`);
-      log.error('Chat completions will not work without the language server.');
+      try {
+        await waitForReady(15000);
+      } catch (err) {
+        log.error(`Language server failed to start: ${err.message}`);
+        log.error('Chat completions will not work without the language server.');
+      }
+    } else {
+      log.info(`Global proxy configured (${bootstrapGlobalProxy.host}:${bootstrapGlobalProxy.port}) — skipping default LS bootstrap`);
     }
   } else {
     log.warn(`Language server binary not found at ${binaryPath}`);
@@ -147,4 +157,6 @@ async function main() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+}
