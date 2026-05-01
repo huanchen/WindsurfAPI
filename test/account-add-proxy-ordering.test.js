@@ -1,14 +1,18 @@
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { configureBindHost, getAccountList, removeAccount } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { getEffectiveProxy, removeProxy } from '../src/dashboard/proxy-config.js';
+import { stopLanguageServer } from '../src/langserver.js';
 
 const originalAllowPrivate = config.allowPrivateProxyHosts;
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
+const originalDisableAutoProbe = process.env.WINDSURFAPI_DISABLE_AUTO_PROBE;
 const createdAccountIds = new Set();
+
+process.env.WINDSURFAPI_DISABLE_AUTO_PROBE = '1';
 
 function fakeRes() {
   return {
@@ -25,6 +29,7 @@ function snapshotAccountIds() {
 }
 
 afterEach(() => {
+  stopLanguageServer();
   config.allowPrivateProxyHosts = originalAllowPrivate;
   config.dashboardPassword = originalDashboardPassword;
   config.apiKey = originalApiKey;
@@ -38,6 +43,12 @@ afterEach(() => {
     removeProxy('account', id);
     createdAccountIds.delete(id);
   }
+});
+
+after(() => {
+  if (originalDisableAutoProbe == null) delete process.env.WINDSURFAPI_DISABLE_AUTO_PROBE;
+  else process.env.WINDSURFAPI_DISABLE_AUTO_PROBE = originalDisableAutoProbe;
+  stopLanguageServer();
 });
 
 describe('POST /accounts proxy ordering (regression for PR #90 follow-up)', () => {

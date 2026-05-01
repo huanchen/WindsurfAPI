@@ -60,6 +60,17 @@ describe('shouldEmitNoAuthWarning', () => {
     assert.equal(validateApiKey(''), false);
   });
 
+  it('accepts comma-separated API_KEY entries', () => {
+    config.apiKey = 'alpha, beta ,gamma';
+    configureBindHost('0.0.0.0');
+
+    assert.equal(validateApiKey('alpha'), true);
+    assert.equal(validateApiKey('beta'), true);
+    assert.equal(validateApiKey('gamma'), true);
+    assert.equal(validateApiKey('alpha, beta'), false);
+    assert.equal(validateApiKey('delta'), false);
+  });
+
   it('returns masked account keys without the raw upstream apiKey', () => {
     const key = `abcd1234efgh5678-${Date.now()}`;
     const account = addAccountByKey(key, 'masked-list');

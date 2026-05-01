@@ -32,6 +32,11 @@ function loadEnv() {
 
 loadEnv();
 
+function enumEnv(name, allowed, fallback) {
+  const value = String(process.env[name] || '').trim().toLowerCase();
+  return allowed.includes(value) ? value : fallback;
+}
+
 // `sharedDataDir` is the cluster-shared root: a single accounts.json lives
 // here so add-account writes from any replica are visible to every replica
 // after restart. `dataDir` is replica-local under REPLICA_ISOLATE=1 and is
@@ -86,6 +91,11 @@ export const config = {
 
   // Proxy testing
   allowPrivateProxyHosts: process.env.ALLOW_PRIVATE_PROXY_HOSTS === '1',
+
+  // passthrough: identity/capability questions go to the upstream model.
+  // gateway: answer narrow identity/capability questions locally from
+  // routing facts, without injecting proxy/model identity into normal tasks.
+  identityMode: enumEnv('IDENTITY_MODE', ['gateway', 'passthrough'], 'passthrough'),
 };
 
 const levels = { debug: 0, info: 1, warn: 2, error: 3 };

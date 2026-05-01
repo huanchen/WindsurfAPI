@@ -97,6 +97,8 @@ async function withFakeLanguageServer(handler, fn) {
   try {
     return await fn(port);
   } finally {
+    const { closeSessionForPort } = await import('../src/grpc.js');
+    closeSessionForPort(port);
     await new Promise(resolve => server.close(resolve));
   }
 }

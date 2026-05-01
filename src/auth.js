@@ -1254,10 +1254,17 @@ export function safeEqualString(a, b) {
   return timingSafeEqual(left, right);
 }
 
+function configuredApiKeys() {
+  return String(config.apiKey || '')
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean);
+}
+
 export function validateApiKey(key) {
   if (!config.apiKey) return isLocalBindHost(_bindHost);
   if (!key) return false;
-  return safeEqualString(key, config.apiKey);
+  return configuredApiKeys().some(candidate => safeEqualString(key, candidate));
 }
 
 export function shouldEmitNoAuthWarning(bindHost, hasKey) {

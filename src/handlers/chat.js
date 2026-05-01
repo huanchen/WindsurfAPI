@@ -591,6 +591,98 @@ const MODEL_PROVIDERS = {
   o3: 'OpenAI', o4: 'OpenAI',
 };
 
+function providerForModel(modelName, modelInfo = null) {
+  const providerFromInfo = String(modelInfo?.provider || '').toLowerCase();
+  const providerNames = {
+    anthropic: 'Anthropic',
+    google: 'Google',
+    openai: 'OpenAI',
+    deepseek: 'DeepSeek',
+    xai: 'xAI',
+    alibaba: 'Alibaba',
+    moonshot: 'Moonshot',
+    zhipu: 'Zhipu',
+    minimax: 'MiniMax',
+    windsurf: 'Windsurf',
+  };
+  if (providerNames[providerFromInfo]) return providerNames[providerFromInfo];
+  const key = Object.keys(MODEL_PROVIDERS).find(k => String(modelName || '').toLowerCase().startsWith(k));
+  return key ? MODEL_PROVIDERS[key] : '';
+}
+
+function lastUserText(messages) {
+  const last = (messages || []).filter(m => m?.role === 'user').pop();
+  const c = last?.content;
+  if (typeof c === 'string') return c.trim();
+  if (Array.isArray(c)) return c.filter(p => p?.type === 'text').map(p => p.text || '').join('\n').trim();
+  return '';
+}
+
+function isIdentityGatewayQuestion(messages) {
+  const text = lastUserText(messages);
+  if (!text || text.length > 180) return false;
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  const zh = /^(你是谁|你是什么|你是什么模型|你是哪[个款]模型|你用的什么模型|你可以做什么|你能做什么|你有什么能力|你的能力是什么|你的特长是什么|你擅长什么|介绍一下你自己)[？?。.!！\s]*$/.test(normalized);
+  const en = /^(who are you|what are you|what model are you|which model are you|what can you do|what are your capabilities|what are you capable of|introduce yourself)[?.!\s]*$/.test(normalized);
+  return zh || en;
+}
+
+function gatewayIdentityText({ model, modelInfo, messages, tools }) {
+  const question = lastUserText(messages);
+  const chinese = /[\u4e00-\u9fff]/.test(question);
+  const provider = providerForModel(model, modelInfo);
+  const toolCount = Array.isArray(tools) ? tools.length : 0;
+  if (chinese) {
+    const base = provider
+      ? `当前请求使用的模型是 ${model}，模型提供方是 ${provider}。`
+      : `当前请求使用的模型是 ${model}。`;
+    const caps = toolCount > 0
+      ? `本次请求提供了 ${toolCount} 个客户端工具；我可以在需要时请求调用这些工具，实际执行由客户端完成。`
+      : '本次请求没有提供客户端工具；我可以基于对话内容回答问题、分析文本、生成和修改代码建议，但不能直接读取、执行或修改你的本地文件。';
+    return `${base}${caps}`;
+  }
+  const base = provider
+    ? `The model for this request is ${model}, provided by ${provider}. `
+    : `The model for this request is ${model}. `;
+  const caps = toolCount > 0
+    ? `This request includes ${toolCount} client-provided tool${toolCount === 1 ? '' : 's'}; I can request those tools when needed, and the client performs the actual execution.`
+    : 'This request does not include client tools; I can answer questions, analyze text, and help draft or revise code, but I cannot directly read, execute, or modify local files.';
+  return base + caps;
+}
+
+function gatewayIdentityResponse({ id, created, model, modelInfo, messages, tools, stream }) {
+  const content = gatewayIdentityText({ model, modelInfo, messages, tools });
+  const usage = cachedUsage(messages, content);
+  if (!stream) {
+    return {
+      status: 200,
+      body: {
+        id, object: 'chat.completion', created, model,
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage,
+      },
+    };
+  }
+  return {
+    status: 200,
+    stream: true,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+    async handler(res) {
+      const chunkId = id;
+      res.write(`data: ${JSON.stringify({ id: chunkId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: chunkId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: chunkId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    },
+  };
+}
+
 export function neutralizeCascadeIdentity(text, modelName) {
   if (!text || !modelName) return text;
   const provider = MODEL_PROVIDERS[Object.keys(MODEL_PROVIDERS).find(k => modelName.toLowerCase().startsWith(k)) || ''];
@@ -1164,6 +1256,12 @@ export async function handleChatCompletions(body, context = {}) {
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
   const emulateTools = useCascade && (hasTools || hasToolHistory);
+  const chatId = genId();
+  const created = Math.floor(Date.now() / 1000);
+  if (config.identityMode === 'gateway' && isIdentityGatewayQuestion(messages)) {
+    log.info(`Chat[${reqId}]: identity gateway response model=${displayModel}`);
+    return gatewayIdentityResponse({ id: chatId, created, model: displayModel, modelInfo, messages, tools, stream });
+  }
   // Build proto-level preamble (goes into tool_calling_section override).
   // Also inject into the last user message as fallback — some models in
   // NO_TOOL mode ignore the SectionOverride entirely and refuse to call
@@ -1311,8 +1409,6 @@ export async function handleChatCompletions(body, context = {}) {
     };
   }
 
-  const chatId = genId();
-  const created = Math.floor(Date.now() / 1000);
   const ckey = cacheKey(body, callerKey);
 
   if (stream) {

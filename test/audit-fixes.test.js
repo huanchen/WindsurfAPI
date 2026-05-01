@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { writeJsonAtomic } from '../src/fs-atomic.js';
 import { cacheKey } from '../src/cache.js';
@@ -175,7 +176,7 @@ describe('atomic write call sites use writeJsonAtomic', () => {
   // helper instead of writeFileSync. A future refactor that drops
   // the import without re-introducing tmp+rename should fail this
   // test rather than silently regress to the truncated-JSON bug.
-  const __dirname = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+  const __dirname = fileURLToPath(new URL('.', import.meta.url));
   const ROOT = join(__dirname, '..');
   const FILES = [
     'src/runtime-config.js',

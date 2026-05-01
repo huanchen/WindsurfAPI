@@ -416,18 +416,13 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     ]);
     convParts.push(writeMessageField(12, additionalSection));
 
-    // field 13 (communication_section): minimal override.
-    // DO NOT include any identity manipulation instructions here — Cascade's
-    // anti-injection system detects "adopt identity X / don't call yourself Y"
-    // as prompt injection and refuses the entire request. (#22)
-    // Let Cascade keep its baked-in identity; tool emulation still works via
-    // field 12 (additional_instructions_section).
-    const toolCommOverride = Buffer.concat([
-      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
-      writeStringField(2,
-        sp.communicationWithTools),
-    ]);
-    convParts.push(writeMessageField(13, toolCommOverride));
+    if (sp.communicationWithTools?.trim()) {
+      const toolCommOverride = Buffer.concat([
+        writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+        writeStringField(2, sp.communicationWithTools.trim()),
+      ]);
+      convParts.push(writeMessageField(13, toolCommOverride));
+    }
   } else {
     // ── No client tools ──
     // Override system prompt sections to suppress Cascade's IDE-assistant
@@ -446,44 +441,23 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     // "string field contains invalid UTF-8". Use field 13
     // (communication_section) for the instructions override instead.
 
-    // field 10 (tool_calling_section): suppress built-in tool list
+    // field 10 (tool_calling_section): suppress built-in tool list with the
+    // smallest possible override. Avoid proxy/API/model-identity wording here;
+    // normal requests should reach the routed model with minimal noise.
     const noToolSection = Buffer.concat([
       writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
       writeStringField(2, 'No tools are available.'),
     ]);
     convParts.push(writeMessageField(10, noToolSection));
 
-    // field 12 (additional_instructions): reinforce direct-answer mode.
-    // Cascade's coding-agent training prior is strong — even with planner_mode
-    // NO_TOOL and "no tools available" system text, it will still narrate
-    // "Let me check /src/main.py" or "I opened config.yaml and saw..." purely
-    // from distribution, and clients like Claude Code then try to Read those
-    // paths in a loop (issue #24). Make the prohibition explicit at the
-    // behaviour level, not just the capability level.
-    const noToolAdditional = Buffer.concat([
-      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
-      writeStringField(2,
-        'CRITICAL OPERATING CONSTRAINT — READ BEFORE ANY RESPONSE:\n' +
-        'You are being accessed as a plain chat API. You have NO tools, NO file access, NO shell, NO code execution, NO repository awareness, NO ability to list or read anything on the user\'s machine or any sandbox. You cannot "check", "look at", "open", "view", "inspect", "run", "glob", "grep", "list", or "edit" anything.\n' +
-        '\n' +
-        'OUTPUT RULES:\n' +
-        '1. Never narrate tool-like actions ("Let me check X", "I\'ll look at Y", "Looking at the file...", "I see in main.py...", "Based on the codebase...").\n' +
-        '2. Never reference file paths, directory structures, line numbers, or repository contents that were not explicitly pasted into the current conversation by the user.\n' +
-        '3. If the user asks about their code or project but hasn\'t pasted the relevant file content, respond: "I don\'t see that file in our conversation — please paste it and I\'ll help." Do NOT invent file contents.\n' +
-        '4. For general questions, answer directly from your training knowledge. No preambles.\n' +
-        '5. Match the user\'s language (Chinese → Chinese, English → English; never switch mid-conversation).\n' +
-        '\n' +
-        'Violating these rules will produce broken output for the end user. Stay in chat-API mode at all times.'),
-    ]);
-    convParts.push(writeMessageField(12, noToolAdditional));
-
-    // field 13 (communication_section): minimal — no identity manipulation.
     const spNoTools = getSystemPrompts();
-    const communicationOverride = Buffer.concat([
-      writeVarintField(1, 1),
-      writeStringField(2, spNoTools.communicationNoTools),
-    ]);
-    convParts.push(writeMessageField(13, communicationOverride));
+    if (spNoTools.communicationNoTools?.trim()) {
+      const communicationOverride = Buffer.concat([
+        writeVarintField(1, 1),
+        writeStringField(2, spNoTools.communicationNoTools.trim()),
+      ]);
+      convParts.push(writeMessageField(13, communicationOverride));
+    }
   }
 
   const conversationalConfig = Buffer.concat(convParts);

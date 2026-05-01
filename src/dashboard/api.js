@@ -12,7 +12,7 @@ import {
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
   setAccountBlockedModels, setAccountTokens, setAccountTier,
-  getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
+  getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString, validateApiKey,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -65,6 +65,10 @@ function json(res, status, body) {
   res.end(data);
 }
 
+function autoProbeEnabled() {
+  return process.env.WINDSURFAPI_DISABLE_AUTO_PROBE !== '1';
+}
+
 function checkAuth(req) {
   // Header-only auth. logs/stream switched from EventSource to fetch +
   // ReadableStream months ago, so the EventSource exception is gone and
@@ -72,7 +76,7 @@ function checkAuth(req) {
   // browser history without any callers needing them.
   const pw = req.headers['x-dashboard-password'] || '';
   if (config.dashboardPassword) return safeEqualString(pw, config.dashboardPassword);
-  if (config.apiKey) return safeEqualString(pw, config.apiKey);
+  if (config.apiKey) return validateApiKey(pw);
   return isLocalBindHost();
 }
 
@@ -100,9 +104,11 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
     // Persist the per-account proxy we used for login so chat requests
     // also egress through the same IP, then warm up a matching LS.
     if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
-    ensureLsForAccount(account.id)
-      .then(() => probeAccount(account.id))
-      .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    if (autoProbeEnabled()) {
+      ensureLsForAccount(account.id)
+        .then(() => probeAccount(account.id))
+        .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    }
   }
 
   return {
@@ -362,11 +368,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       if (parsedProxy) {
         setAccountProxy(account.id, parsedProxy);
-        ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        if (autoProbeEnabled()) {
+          ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        }
       }
 
       // Fire-and-forget probe so the UI gets tier info shortly after add
-      probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+      if (autoProbeEnabled()) {
+        probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+      }
       return json(res, 200, {
         success: true,
         account: { id: account.id, email: account.email, method: account.method, status: account.status },
@@ -563,7 +573,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (proxyAccount && method === 'PUT') {
     setAccountProxy(proxyAccount[1], body);
     // Spawn (or adopt) the LS instance for this proxy so chat routes immediately
-    ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+    if (autoProbeEnabled()) {
+      ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+    }
     return json(res, 200, { success: true });
   }
   if (proxyAccount && method === 'DELETE') {
@@ -851,7 +863,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
               result.proxy = proxy;
-              ensureLsForAccount(binding.accountId).catch(() => {});
+              if (autoProbeEnabled()) ensureLsForAccount(binding.accountId).catch(() => {});
           }
           results.push(result);
         } catch (err) {
@@ -881,9 +893,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         if (refreshToken) {
           setAccountTokens(account.id, { refreshToken, idToken });
         }
-        ensureLsForAccount(account.id)
-          .then(() => probeAccount(account.id))
-          .catch(e => log.warn(`OAuth auto-probe failed: ${e.message}`));
+        if (autoProbeEnabled()) {
+          ensureLsForAccount(account.id)
+            .then(() => probeAccount(account.id))
+            .catch(e => log.warn(`OAuth auto-probe failed: ${e.message}`));
+        }
       }
 
       return json(res, 200, {
