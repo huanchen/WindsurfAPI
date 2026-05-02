@@ -75,3 +75,23 @@ test('Stream error after retries log uses a fallback when lastErr is null (#77)'
     'log.error must include a fallback after lastErr?.message so an empty/null lastErr never produces an unidentifiable log line',
   );
 });
+
+test('account retry budget scales with the routed model account pool', () => {
+  const src = readFileSync(join(root, 'src/handlers/chat.js'), 'utf8');
+
+  assert.match(
+    src,
+    /function maxAttemptsForModel\(modelKey\)/,
+    'chat retry budget should be computed from the routed model, not a fixed cap',
+  );
+  assert.doesNotMatch(
+    src,
+    /Math\.min\(10,\s*Math\.max\(3,\s*getAccountList\(\)\.filter/,
+    'retry budget must not be capped at 10 accounts again',
+  );
+  assert.match(
+    src,
+    /本次已尝试 \$\{triedCount\}\/\$\{total\}/,
+    'pool-exhausted diagnostics should include tried/eligible counts',
+  );
+});
