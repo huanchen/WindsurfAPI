@@ -1,0 +1,27 @@
+[Unit]
+Description=WindsurfAPI OpenAI/Anthropic compatible proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/WindsurfAPI
+Environment=NODE_ENV=production
+Environment=PORT=3003
+Environment=DATA_DIR=/opt/WindsurfAPI/data
+Environment=LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+Environment=LS_PORT=42100
+Environment=HTTP_PROXY=http://127.0.0.1:7891
+Environment=HTTPS_PROXY=http://127.0.0.1:7891
+Environment=ALL_PROXY=http://127.0.0.1:7891
+Environment=NO_PROXY=127.0.0.1,localhost
+ExecStart=/usr/bin/env node /opt/WindsurfAPI/src/index.js
+Restart=on-failure
+RestartSec=5s
+User=root
+NoNewPrivileges=true
+StandardOutput=append:/opt/WindsurfAPI/logs/windsurf-api.log
+StandardError=append:/opt/WindsurfAPI/logs/windsurf-api.log
+
+[Install]
+WantedBy=multi-user.target

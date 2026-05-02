@@ -29,6 +29,10 @@ import { registerSseController } from '../sse-registry.js';
 const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
+const MAX_ACCOUNT_ATTEMPTS = (() => {
+  const n = parseInt(process.env.MAX_ACCOUNT_ATTEMPTS || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+})();
 
 // Build the option bag the v2.0.25 semantic key needs. tools / tool_choice /
 // preamble are baked into the digest so a tool schema change misses instead
@@ -1105,6 +1109,30 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
   return acct;
 }
 
+function accountCountsForModel(modelKey) {
+  const active = getAccountList().filter(a => a.status === 'active');
+  if (!modelKey) return { activeCount: active.length, eligibleCount: active.length };
+  const eligible = active.filter(a => Array.isArray(a.availableModels) && a.availableModels.includes(modelKey));
+  return { activeCount: active.length, eligibleCount: eligible.length };
+}
+
+function maxAttemptsForModel(modelKey) {
+  const { activeCount, eligibleCount } = accountCountsForModel(modelKey);
+  const count = Math.max(3, eligibleCount || activeCount);
+  return MAX_ACCOUNT_ATTEMPTS ? Math.min(MAX_ACCOUNT_ATTEMPTS, count) : count;
+}
+
+function routedModelLabel(displayModel, modelKey) {
+  return modelKey && modelKey !== displayModel ? `${displayModel} -> ${modelKey}` : displayModel;
+}
+
+function poolStatusLabel(displayModel, modelKey, triedCount = null) {
+  const { activeCount, eligibleCount } = accountCountsForModel(modelKey);
+  const total = eligibleCount || activeCount;
+  const tried = Number.isFinite(triedCount) ? `（本次已尝试 ${triedCount}/${total}）` : '';
+  return `当前路由模型 ${routedModelLabel(displayModel, modelKey)} 的可用账号${tried}`;
+}
+
 export async function handleChatCompletions(body, context = {}) {
   const reqId = Math.random().toString(36).slice(2, 8);
   const {
@@ -1489,12 +1517,7 @@ export async function handleChatCompletions(body, context = {}) {
   // upstream_transient_error instead of the misleading "rate limit"
   // message the all-accounts-exhausted branch would otherwise produce.
   let internalCount = 0;
-  // Dynamic: try every active account in the pool (capped at 10) so a
-  // large pool with many rate-limited accounts can still fall through
-  // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-  // first accounts rate-limited, healthy accounts were never reached
-  // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+  const maxAttempts = maxAttemptsForModel(routingModelKey);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
@@ -1541,9 +1564,9 @@ export async function handleChatCompletions(body, context = {}) {
           const tempUnavail = isAllTemporarilyUnavailable(routingModelKey);
           const rateLimited = isAllRateLimited(routingModelKey);
           const reason = tempUnavail.allUnavailable
-            ? `所有可用账号暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
+            ? `${poolStatusLabel(displayModel, routingModelKey, tried.length)}暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
             : rateLimited.allLimited
-            ? `所有可用账号均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
+            ? `${poolStatusLabel(displayModel, routingModelKey, tried.length)}均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
             : `${Math.ceil(QUEUE_MAX_WAIT_MS / 1000)} 秒内没有账号变为可用 — 账号可能被速率限制或对当前模型无权限`;
           lastErr = {
             status: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 429 : 503,
@@ -1697,7 +1720,7 @@ export async function handleChatCompletions(body, context = {}) {
       headers: { 'Retry-After': String(retryAfterSec) },
       body: {
         error: {
-          message: `${displayModel} 所有账号暂时不可用，请 ${retryAfterSec} 秒后重试`,
+          message: `${poolStatusLabel(displayModel, routingModelKey, tried.length)}暂时不可用，请 ${retryAfterSec} 秒后重试`,
           type: 'rate_limit_exceeded',
           retry_after_ms: temporaryUnavailable.retryAfterMs,
         },
@@ -1712,7 +1735,7 @@ export async function handleChatCompletions(body, context = {}) {
         log.info(`Chat[${reqId}]: restored checked-out cascade after rate limit`);
       }
       const retryAfterSec = Math.ceil(rl.retryAfterMs / 1000);
-      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${poolStatusLabel(displayModel, routingModelKey, tried.length)}均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
     }
   }
   if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
@@ -2019,12 +2042,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // between accounts and (b) surface upstream_transient_error when
       // every attempt hit it.
       let streamInternalCount = 0;
-      // Dynamic: try every active account in the pool (capped at 10) so a
-  // large pool with many rate-limited accounts can still fall through
-  // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-  // first accounts rate-limited, healthy accounts were never reached
-  // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+      const maxAttempts = maxAttemptsForModel(modelKey);
 
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
@@ -2209,9 +2227,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 const tempUnavail = isAllTemporarilyUnavailable(modelKey);
                 const rateLimited = isAllRateLimited(modelKey);
                 const reason = tempUnavail.allUnavailable
-                  ? `所有可用账号暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
+                  ? `${poolStatusLabel(model, modelKey, tried.length)}暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
                   : rateLimited.allLimited
-                  ? `所有可用账号均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
+                  ? `${poolStatusLabel(model, modelKey, tried.length)}均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
                   : `${Math.ceil(QUEUE_MAX_WAIT_MS / 1000)} 秒内没有账号变为可用 — 账号可能被速率限制或对当前模型无权限`;
                 lastErr = Object.assign(
                   new Error(`${model} 账号队列超时: ${reason}`),
@@ -2439,9 +2457,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           const errMsg = allInternal
             ? upstreamTransientErrorMessage(model, tried.length, lastIsTransport ? 'cascade_transport' : 'internal_error')
             : temporaryUnavailable.allUnavailable
-            ? `${model} 所有账号暂时不可用，请 ${Math.ceil(temporaryUnavailable.retryAfterMs / 1000)} 秒后重试`
+            ? `${poolStatusLabel(model, modelKey, tried.length)}暂时不可用，请 ${Math.ceil(temporaryUnavailable.retryAfterMs / 1000)} 秒后重试`
             : rl.allLimited
-            ? `${model} 所有账号均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`
+            ? `${poolStatusLabel(model, modelKey, tried.length)}均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`
             : sanitizeText(lastErr?.message || 'no accounts');
           if (allInternal) {
             log.error(`Chat[${reqId}] stream: ${tried.length}/${tried.length} accounts hit upstream transient error — surfacing upstream_transient_error`);
