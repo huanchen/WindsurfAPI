@@ -41,3 +41,4 @@ stats.json
 package-lock.json
 *.png
 .docker-data/
+sing-box/
