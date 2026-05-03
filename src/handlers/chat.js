@@ -1099,12 +1099,17 @@ function buildUsageBody(serverUsage, messages, completionText, thinkingText = ''
 // client is queued instead of getting a 503.
 async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null) {
   const deadline = Date.now() + maxWaitMs;
+  // Try strict (capability-filtered) first; if no candidate is found
+  // immediately fall through to optimistic mode so accounts without a
+  // probe record are still tried rather than stalling for maxWaitMs.
   let acct = getApiKey(tried, modelKey);
+  if (!acct && modelKey) acct = getApiKey(tried, modelKey, { optimistic: true });
   while (!acct) {
     if (signal?.aborted) return null;
     if (Date.now() >= deadline) return null;
     await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
     acct = getApiKey(tried, modelKey);
+    if (!acct && modelKey) acct = getApiKey(tried, modelKey, { optimistic: true });
   }
   return acct;
 }
