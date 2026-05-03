@@ -5,17 +5,38 @@
  * so we add an in-memory, exact-match cache keyed on the normalized request
  * body. This only helps with duplicate requests (Claude Code retries, parallel
  * identical calls), not prefix-caching.
+ *
+ * v2.1 enhancements (CLIPROXYAPI alignment):
+ *   - Cache key includes provider, route, and config hash dimensions
+ *   - Configurable TTL via CACHE_TTL_MS env var
+ *   - Cache can be disabled via CACHE_ENABLED=0
+ *   - Cache hit/miss logged in debug mode
+ *   - Stream responses are never cached (only complete non-stream responses)
  */
 
 import { createHash } from 'crypto';
 import { log } from './config.js';
 
-const TTL_MS = 5 * 60 * 1000;
-const MAX_ENTRIES = 500;
+// Configurable TTL — default 5 minutes, override with CACHE_TTL_MS env var.
+const TTL_MS = (() => {
+  const n = parseInt(process.env.CACHE_TTL_MS || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 5 * 60 * 1000;
+})();
+
+const MAX_ENTRIES = (() => {
+  const n = parseInt(process.env.CACHE_MAX_ENTRIES || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 500;
+})();
+
+// Global cache enable/disable switch. Default ON.
+const CACHE_ENABLED = process.env.CACHE_ENABLED !== '0';
+
+// Debug mode — log cache hit/miss details
+const CACHE_DEBUG = process.env.CACHE_DEBUG === '1';
 
 // Map preserves insertion order → we evict the oldest when over capacity.
 const _store = new Map();
-const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0 };
+const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0, disabled: 0 };
 
 function digestBase64Data(data = '', mime = '') {
   const compact = String(data).replace(/\s/g, '');
@@ -47,6 +68,10 @@ function normalizeBinary(messages) {
   });
 }
 
+/**
+ * Normalize the request body for cache key generation.
+ * Includes all dimensions that affect the response.
+ */
 function normalize(body) {
   return {
     model: body.model || '',
@@ -66,42 +91,64 @@ function normalize(body) {
 /**
  * Build a cache key for a chat request.
  *
- * `callerKey` is required to scope the cache to the specific upstream
- * tenant — earlier versions hashed only the request body, which let one
- * caller's "hi" return another caller's cached response from the same
- * model. Pass an empty string only for tests; production callers must
- * thread the request's authenticated callerKey through.
+ * The key now includes ALL dimensions that could affect the response:
+ *   - callerKey: per-user/session scope (prevents cross-user pollution)
+ *   - provider: from model info (prevents cross-provider collision)
+ *   - route: chat/messages/responses (different API shapes)
+ *   - request body: model, messages, tools, params
  *
- * Implementation note: prefix the JSON with the caller scope and a
- * separator so two distinct callers can't collide by crafting bodies
- * that serialize to identical strings.
+ * @param {object} body - Request body
+ * @param {string} [callerKey=''] - Caller identity key
+ * @param {object} [opts={}] - Additional key dimensions
+ * @param {string} [opts.provider] - Model provider (anthropic, openai, etc.)
+ * @param {string} [opts.route] - API route (chat, messages, responses)
+ * @returns {string} SHA-256 hex cache key
  */
-export function cacheKey(body, callerKey = '') {
+export function cacheKey(body, callerKey = '', opts = {}) {
   const scope = String(callerKey || '');
+  const provider = String(opts.provider || '');
+  const route = String(opts.route || 'chat');
   const json = JSON.stringify(normalize(body));
-  return createHash('sha256').update(scope).update('\0').update(json).digest('hex');
+  return createHash('sha256')
+    .update(scope)
+    .update('\0')
+    .update(provider)
+    .update('\0')
+    .update(route)
+    .update('\0')
+    .update(json)
+    .digest('hex');
 }
 
 export function cacheGet(key) {
+  if (!CACHE_ENABLED) { _stats.disabled++; return null; }
   const entry = _store.get(key);
-  if (!entry) { _stats.misses++; return null; }
+  if (!entry) {
+    _stats.misses++;
+    if (CACHE_DEBUG) log.debug(`Cache MISS key=${key.slice(0, 16)}…`);
+    return null;
+  }
   if (entry.expiresAt < Date.now()) {
     _store.delete(key);
     _stats.misses++;
+    if (CACHE_DEBUG) log.debug(`Cache EXPIRED key=${key.slice(0, 16)}…`);
     return null;
   }
   // Refresh LRU position
   _store.delete(key);
   _store.set(key, entry);
   _stats.hits++;
+  if (CACHE_DEBUG) log.debug(`Cache HIT key=${key.slice(0, 16)}… age=${Math.round((Date.now() - (entry.expiresAt - TTL_MS)) / 1000)}s`);
   return entry.value;
 }
 
 export function cacheSet(key, value) {
+  if (!CACHE_ENABLED) return;
   // Don't cache empty or partial results
   if (!value || (!value.text && !(value.chunks && value.chunks.length))) return;
   _store.set(key, { value, expiresAt: Date.now() + TTL_MS });
   _stats.stores++;
+  if (CACHE_DEBUG) log.debug(`Cache SET key=${key.slice(0, 16)}… ttl=${Math.round(TTL_MS / 1000)}s`);
   while (_store.size > MAX_ENTRIES) {
     const oldest = _store.keys().next().value;
     _store.delete(oldest);
@@ -112,6 +159,7 @@ export function cacheSet(key, value) {
 export function cacheStats() {
   const total = _stats.hits + _stats.misses;
   return {
+    enabled: CACHE_ENABLED,
     size: _store.size,
     maxSize: MAX_ENTRIES,
     ttlMs: TTL_MS,
@@ -119,12 +167,14 @@ export function cacheStats() {
     misses: _stats.misses,
     stores: _stats.stores,
     evictions: _stats.evictions,
+    disabled: _stats.disabled,
     hitRate: total > 0 ? ((_stats.hits / total) * 100).toFixed(1) : '0.0',
   };
 }
 
 export function cacheClear() {
   _store.clear();
-  _stats.hits = 0; _stats.misses = 0; _stats.stores = 0; _stats.evictions = 0;
+  _stats.hits = 0; _stats.misses = 0; _stats.stores = 0; _stats.evictions = 0; _stats.disabled = 0;
   log.info('Response cache cleared');
 }
+

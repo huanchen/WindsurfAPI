@@ -26,6 +26,7 @@ import {
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
+import { stickyStats } from '../account/sticky-session.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
@@ -234,7 +235,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Experimental features ────────────────────────────
   if (subpath === '/experimental' && method === 'GET') {
-    return json(res, 200, { flags: getExperimental(), conversationPool: convPoolStats() });
+    return json(res, 200, { flags: getExperimental(), conversationPool: convPoolStats(), stickySession: stickyStats() });
   }
   if (subpath === '/experimental' && method === 'PUT') {
     const flags = setExperimental(body || {});

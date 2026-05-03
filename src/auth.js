@@ -15,6 +15,7 @@ import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
 
 import { join } from 'path';
+import { getStickyBinding, setStickyBinding, clearStickyBinding, clearBindingsForAccount, recordStickyFallback, isStickyEnabled } from './account/sticky-session.js';
 // accounts.json lives in the cluster-shared dir so add-account writes from
 // one replica survive future restarts and are visible to every replica.
 // See `src/config.js` (sharedDataDir vs dataDir) and issue #67.
@@ -595,6 +596,8 @@ export function removeAccount(id) {
   // Drop any Cascade conversations owned by this key so future requests
   // don't try to resume on an account that no longer exists.
   import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey: account.apiKey })).catch(() => {});
+  // Clear sticky session bindings for this account
+  clearBindingsForAccount(id);
   log.info(`Account removed: ${id} (${account.email})`);
   return true;
 }
@@ -613,7 +616,25 @@ export function removeAccount(id) {
  * Returns null when every account is temporarily full — callers should
  * wait a moment and retry (see handlers/chat.js queue loop).
  */
-export function getApiKey(excludeKeys = [], modelKey = null) {
+export function getApiKey(excludeKeys = [], modelKey = null, callerKey = '') {
+  // Sticky session: try the bound account first
+  if (callerKey && isStickyEnabled()) {
+    const binding = getStickyBinding(callerKey, modelKey);
+    if (binding && !excludeKeys.includes(binding.apiKey)) {
+      const sticky = acquireAccountByKey(binding.apiKey, modelKey);
+      if (sticky) {
+        sticky._sticky = true;
+        return sticky;
+      }
+      // Bound account unavailable — immediately clear the stale binding
+      // so subsequent retries in the same request don't keep trying it.
+      // reportSuccess will create a fresh binding to whatever account
+      // the round-robin selects.
+      clearStickyBinding(callerKey, modelKey);
+      recordStickyFallback();
+    }
+  }
+
   const now = Date.now();
   const candidates = [];
   for (const a of accounts) {
@@ -855,6 +876,28 @@ function isRateLimitedForModel(account, modelKey, now) {
   return false;
 }
 
+// ─── Cooldown maintenance (CLIProxyAPI-style failureMonitor) ──────────
+// Proactively clear expired rate limits so the first request after an
+// idle gap doesn't waste time on stale cooldowns. CLIProxyAPI's
+// recoverExpiredCooldowns does this in a goroutine; we use setInterval.
+const COOLDOWN_MAINTENANCE_MS = 30_000;
+function runCooldownMaintenance() {
+  const now = Date.now();
+  for (const a of accounts) {
+    // Global rate limit
+    if (a.rateLimitedUntil && a.rateLimitedUntil <= now) {
+      a.rateLimitedUntil = 0;
+    }
+    // Per-model rate limits
+    if (a._modelRateLimits) {
+      for (const [model, until] of Object.entries(a._modelRateLimits)) {
+        if (until <= now) delete a._modelRateLimits[model];
+      }
+    }
+  }
+}
+setInterval(runCooldownMaintenance, COOLDOWN_MAINTENANCE_MS).unref();
+
 /**
  * Report an error for an API key (increment error count, auto-disable).
  */
@@ -871,7 +914,7 @@ export function reportError(apiKey) {
 /**
  * Reset error count for an API key (call on success).
  */
-export function reportSuccess(apiKey) {
+export function reportSuccess(apiKey, callerKey = '', modelKey = '') {
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
   if (account.errorCount > 0) {
@@ -879,12 +922,13 @@ export function reportSuccess(apiKey) {
     account.status = 'active';
   }
   account.internalErrorStreak = 0;
-  // v2.0.56: any successful chat clears the ban-signal streak — Windsurf's
-  // "Authentication failed" can fire transiently during deploys, so we
-  // only mark banned when the streak isn't broken by a real success.
   if (account._banSignalCount) {
     account._banSignalCount = 0;
     account._banSignalAt = 0;
+  }
+  // Sticky session: bind this caller+model to this account on success
+  if (callerKey && isStickyEnabled()) {
+    setStickyBinding(callerKey, account.id, apiKey, modelKey);
   }
 }
 

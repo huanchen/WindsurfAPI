@@ -253,7 +253,17 @@ export async function ensureLs(proxy = null) {
 
     log.info(`Starting LS instance key=${key} port=${port} proxy=${redactProxyUrl(pUrl)}`);
 
-    const proc = spawn(_binaryPath, args, {
+    // On high-core machines (>16 cores), Go's automaxprocs detects all
+    // cores and the gRPC service registration takes >2s, causing the LS
+    // Manager's hardcoded 2s health check to fail. Use taskset to pin
+    // the process to a small CPU set so automaxprocs picks a sane value.
+    const cpuCount = (await import('os')).cpus().length;
+    const useTaskset = cpuCount > 16 && existsSync('/usr/bin/taskset');
+    const spawnCmd = useTaskset ? '/usr/bin/taskset' : _binaryPath;
+    const spawnArgs = useTaskset ? ['-c', '0-3', _binaryPath, ...args] : args;
+    if (useTaskset) log.info(`LS: ${cpuCount} CPUs detected, using taskset to pin LS to cores 0-3`);
+
+    const proc = spawn(spawnCmd, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
     });
@@ -272,24 +282,40 @@ export async function ensureLs(proxy = null) {
     });
     proc.on('exit', (code, signal) => {
       log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);
-      if (code === 1) {
-        log.error('LS crashed on startup. Common causes:');
+      const gone = _pool.get(key);
+      _pool.delete(key);
+      _pending.delete(key);
+      if (gone?.port) {
+        closeSessionForPort(gone.port);
+        const goneGen = gone.generation;
+        import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port, lsGeneration: goneGen })).catch(() => {});
+      }
+
+      // Auto-retry on code=1 (LS Manager 2s timeout crash).
+      // The Manager's internal health check has a hardcoded 2s/1-retry
+      // timeout that fires on high-core machines. The child LS binds the
+      // port fine but the Manager's gRPC probe fails. Second attempt
+      // usually succeeds because the port binding is faster on retry.
+      const retryCount = (gone?._retryCount || 0);
+      const MAX_RETRIES = 3;
+      if (code === 1 && retryCount < MAX_RETRIES) {
+        const delayMs = 1000 * (retryCount + 1);
+        log.info(`LS auto-retry ${retryCount + 1}/${MAX_RETRIES} in ${delayMs}ms`);
+        setTimeout(async () => {
+          try {
+            const entry = await ensureLs(proxy);
+            if (entry) entry._retryCount = retryCount + 1;
+            log.info(`LS auto-retry ${retryCount + 1} succeeded on port ${entry?.port}`);
+          } catch (e) {
+            log.error(`LS auto-retry ${retryCount + 1} failed: ${e.message}`);
+          }
+        }, delayMs);
+      } else if (code === 1) {
+        log.error('LS crashed on startup after ' + MAX_RETRIES + ' retries. Common causes:');
         log.error('  1. Binary incompatible with this OS/arch — re-download with: bash install-ls.sh');
         log.error('  2. Missing glibc/libstdc++ — run: ldd ' + _binaryPath + ' | grep "not found"');
         log.error('  3. Binary corrupted — delete and re-download: rm ' + _binaryPath + ' && bash install-ls.sh');
         log.error('  4. Port already in use — check: lsof -i :' + port);
-      }
-      const gone = _pool.get(key);
-      _pool.delete(key);
-      if (gone?.port) {
-        // Drop the pooled HTTP/2 session so the next request to the
-        // replacement LS opens a fresh one instead of writing into a
-        // dead socket (grpc.js caches one session per port).
-        closeSessionForPort(gone.port);
-        // v2.0.25 LOW-1: pass the dead LS's generation so a new LS that
-        // already came up on the same port keeps its entries.
-        const goneGen = gone.generation;
-        import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port, lsGeneration: goneGen })).catch(() => {});
       }
     });
     proc.on('error', (err) => {

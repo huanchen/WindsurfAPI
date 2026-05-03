@@ -29,12 +29,19 @@ describe('extractBodyCallerSubKey (v2.0.25 HIGH-3)', () => {
     assert.ok(k && k.length === 16);
   });
 
-  it('does NOT inspect metadata.user_id (handled by messages.js parser)', () => {
-    // metadata.user_id is the Anthropic Claude Code device id field; the
-    // /v1/messages handler has a specialized parser for its JSON-encoded
-    // shape and appends `:user:` itself. Two-handler stamping would
-    // double-prefix the callerKey, so caller-key.js stays out of it.
-    assert.equal(extractBodyCallerSubKey({ metadata: { user_id: '{"device_id":"abc"}' } }), '');
+  it('inspects metadata.user_id for Claude Code session extraction', () => {
+    // v2.1 (CLIProxyAPI alignment): metadata.user_id is now parsed to
+    // extract session_id / device_id for per-session sticky routing.
+    const k = extractBodyCallerSubKey({ metadata: { user_id: '{"device_id":"abc"}' } });
+    assert.ok(k && k.length === 16, `expected 16-char hash, got '${k}'`);
+  });
+
+  it('extracts _session_ uuid from Claude Code user_id format', () => {
+    const a = extractBodyCallerSubKey({ metadata: { user_id: 'user_abc123_account__session_550e8400-e29b-41d4-a716-446655440000' } });
+    const b = extractBodyCallerSubKey({ metadata: { user_id: 'user_xyz789_account__session_550e8400-e29b-41d4-a716-446655440000' } });
+    assert.ok(a && a.length === 16);
+    // Same session UUID → same subkey regardless of user prefix
+    assert.equal(a, b);
   });
 });
 

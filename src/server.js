@@ -30,6 +30,7 @@ import { handleDashboardApi } from './dashboard/api.js';
 import { config, log } from './config.js';
 import { VERSION } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
+import { generateTraceId } from './core/trace.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -318,10 +319,12 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const traceId = generateTraceId();
+    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body), traceId });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
+      'x-trace-id': traceId,
       'openai-model': body.model || '',
       // Actual upstream processing time — hvoy.ai and similar verifiers
       // treat a flat "0" as a fingerprint of a faking proxy.
@@ -365,6 +368,7 @@ async function route(req, res) {
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
+      'x-trace-id': generateTraceId(),
       'openai-model': body.model || '',
       'openai-processing-ms': String(processingMs),
       'openai-version': '2020-10-01',
@@ -398,6 +402,7 @@ async function route(req, res) {
     const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
     const anthropicHeaders = {
       'request-id': 'req-' + randomUUID(),
+      'x-trace-id': generateTraceId(),
       'anthropic-model': body.model || '',
     };
     if (result.stream) {

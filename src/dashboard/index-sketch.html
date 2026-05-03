@@ -2064,6 +2064,12 @@ window._firebaseOAuth = async function(provider) {
 <div class="toast-stack" id="toast-stack"></div>
 
 <script>
+// Reverse-proxy base path detection (same as default dashboard)
+const _basePath = (() => {
+  const p = window.location.pathname;
+  const idx = p.indexOf('/dashboard');
+  return idx > 0 ? p.slice(0, idx) : '';
+})();
 /* ──────────────────────────────────────────────
    Tiny i18n — element-attribute-driven
    ────────────────────────────────────────────── */
@@ -2157,7 +2163,7 @@ const App = {
       // Pre-flight: check the password against /auth before storing it so a
       // wrong attempt actually shows feedback instead of silently re-rendering
       // the same overlay (which looks like "no response" to users).
-      const r = await fetch('/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
+      const r = await fetch(_basePath + '/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
       const data = await r.json().catch(() => ({}));
       if (data.locked) {
         if (errEl) errEl.textContent = en
@@ -2206,7 +2212,7 @@ const App = {
     if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
     if (body) opts.body = JSON.stringify(body);
     try {
-      const r = await fetch('/dashboard/api' + path, opts);
+      const r = await fetch(_basePath + '/dashboard/api' + path, opts);
       const data = await r.json();
       if (r.status === 401) {
         document.getElementById('login-overlay').classList.remove('hidden');
@@ -2382,7 +2388,7 @@ const App = {
   async loadOverview() {
     const d = await this.api('GET', '/overview') || {};
     try {
-      const h = await fetch('/health').then(r => r.json()).catch(() => null);
+      const h = await fetch(_basePath + '/health').then(r => r.json()).catch(() => null);
       if (h) {
         const sv = document.getElementById('sidebar-ver');
         if (sv) sv.textContent = h.commit ? `v${h.version}·${h.commit.slice(0,7)}` : `v${h.version}`;
@@ -3144,7 +3150,7 @@ const App = {
     const controller = new AbortController();
     this.sseConn = { close: () => controller.abort() };
 
-    fetch('/dashboard/api/logs/stream', { headers, signal: controller.signal })
+    fetch(_basePath + '/dashboard/api/logs/stream', { headers, signal: controller.signal })
       .then(r => {
         if (!r.ok || !r.body) throw new Error('SSE connect failed');
         const reader = r.body.getReader();
@@ -3455,7 +3461,7 @@ const App = {
   async fetchContributors() {
     if (this.CONTRIBUTORS_CACHE) return this.CONTRIBUTORS_CACHE;
     try {
-      const r = await fetch('/dashboard/data/contributors.json');
+      const r = await fetch(_basePath + '/dashboard/data/contributors.json');
       if (!r.ok) throw new Error(`status ${r.status}`);
       const data = await r.json();
       this.CONTRIBUTORS_CACHE = Array.isArray(data?.contributors) ? data.contributors : [];

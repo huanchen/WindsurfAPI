@@ -9,16 +9,54 @@ function sha256Hex(value) {
 // scopes. v2.0.25 HIGH-3: chat & responses now look at body.user /
 // conversation / previous_response_id / metadata.{conversation_id,session_id}.
 //
-// metadata.user_id is INTENTIONALLY NOT inspected here — handlers/messages.js
-// has a specialized parser for it (Claude Code's JSON-encoded
-// {device_id, session_id, account_uuid} shape) and appends its own
-// `:user:<digest>` to keep the two extraction paths from double-stamping
-// the same callerKey.
+// v2.1 (CLIProxyAPI alignment): metadata.user_id is now inspected here
+// for ALL API formats. Claude Code sends it as a JSON-encoded
+// {device_id, session_id, account_uuid} object or plain string.
+// The _session_{uuid} suffix is extracted when present for maximum
+// session isolation. handlers/messages.js still has its own
+// extractCallerSubKey that overrides the callerKey with :user: tag,
+// so Anthropic-format requests get two chances to extract — no
+// double-stamping because messages.js fully replaces the suffix.
+//
+// Priority order (aligns with CLIProxyAPI ExtractSessionID):
+//   1. metadata.user_id with _session_{uuid} (Claude Code format)
+//   2. metadata.user_id as JSON {session_id} (Claude Code 2.1+)
+//   3. metadata.user_id as plain string
+//   4. body.user / metadata.session_id / metadata.conversation_id / etc.
 //
 // The returned subkey is appended to the API-key callerKey so reuse stays
 // pinned to (apiKey, user/session). Returns '' when no usable signal.
+
+const SESSION_PATTERN = /_session_([a-f0-9-]+)$/;
+
 export function extractBodyCallerSubKey(body) {
   if (!body || typeof body !== 'object') return '';
+
+  // 1-3. metadata.user_id (Claude Code session extraction)
+  const userId = typeof body?.metadata?.user_id === 'string' ? body.metadata.user_id : '';
+  if (userId) {
+    // 1. Old format: user_{hash}_account__session_{uuid}
+    const sessionMatch = userId.match(SESSION_PATTERN);
+    if (sessionMatch) return sha256Hex('claude:' + sessionMatch[1]).slice(0, 16);
+
+    // 2. New format: JSON {device_id, session_id, account_uuid}
+    let parsed = null;
+    if (userId[0] === '{') {
+      try { parsed = JSON.parse(userId); } catch {}
+    }
+    if (parsed && typeof parsed === 'object') {
+      const tag = parsed.session_id || parsed.sessionId
+        || parsed.device_id || parsed.deviceId
+        || parsed.account_uuid || parsed.accountUuid
+        || '';
+      if (tag) return sha256Hex(tag).slice(0, 16);
+    }
+
+    // 3. Plain string user_id
+    return sha256Hex(userId).slice(0, 16);
+  }
+
+  // 4. Other body-level signals
   const candidates = [
     typeof body.user === 'string' ? body.user : '',
     typeof body?.metadata?.conversation_id === 'string' ? body.metadata.conversation_id : '',

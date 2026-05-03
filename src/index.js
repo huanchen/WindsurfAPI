@@ -5,20 +5,14 @@ import { startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguag
 import { startServer } from './server.js';
 import { config, log } from './config.js';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { resolveWorkspaceBase, resolveDbDir, ensureDir } from './core/session-path.js';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 import { startQuietWindowAutoUpdate, stopQuietWindowAutoUpdate } from './dashboard/quiet-window-updater.js';
 export { VERSION, BRAND };
-
-function workspaceBase() {
-  const tmpDir = process.env.TEMP || process.env.TMP || tmpdir();
-  const suffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
-  return join(tmpDir, `windsurf-workspace${suffix}`);
-}
 
 function resetWorkspace() {
   // Wipe the workspace on every startup. If we don't, files created by
@@ -30,7 +24,7 @@ function resetWorkspace() {
   // Using Node fs APIs instead of an `execSync('mkdir -p ... && rm -rf')`
   // shell pipeline so this is correct on Windows, macOS, and Linux without
   // depending on a POSIX shell.
-  const wsBase = workspaceBase();
+  const wsBase = resolveWorkspaceBase();
   try {
     mkdirSync(wsBase, { recursive: true });
     for (const name of readdirSync(wsBase)) {
@@ -38,7 +32,7 @@ function resetWorkspace() {
     }
   } catch {}
   try {
-    mkdirSync(join('/opt/windsurf/data', 'db'), { recursive: true });
+    ensureDir(resolveDbDir(config.dataDir));
   } catch {}
 }
 

@@ -2323,6 +2323,15 @@ window._firebaseOAuth = async function(provider) {
 <div class="toast-stack" id="toast-stack"></div>
 
 <script>
+// Reverse-proxy base path detection: when served behind nginx at
+// /windsurf/dashboard, extract "/windsurf" so all API fetches prepend it.
+// Direct access at /dashboard yields "" (no prefix). Works for any depth.
+const _basePath = (() => {
+  const p = window.location.pathname;
+  const idx = p.indexOf('/dashboard');
+  return idx > 0 ? p.slice(0, idx) : '';
+})();
+
 // Comprehensive i18n system with locale bundles
 const I18n = {
   locale: 'zh-CN',
@@ -2333,7 +2342,7 @@ const I18n = {
   async loadLocale(lang) {
     const code = lang === 'zh' ? 'zh-CN' : (lang === 'en' ? 'en' : lang);
     try {
-      const res = await fetch(`/dashboard/i18n/${code}.json`);
+      const res = await fetch(`${_basePath}/dashboard/i18n/${code}.json`);
       if (!res.ok) throw new Error(`Failed to load ${code}`);
       this.bundles[code] = await res.json();
       this.loaded = true;
@@ -2575,7 +2584,7 @@ docker compose up -d --force-recreate</pre>
       // Pre-flight: check the password against /auth before storing it so a
       // wrong attempt actually shows feedback instead of silently re-rendering
       // the same overlay (which looks like "no response" to users).
-      const r = await fetch('/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
+      const r = await fetch(_basePath + '/dashboard/api/auth', { headers: { 'X-Dashboard-Password': pw } });
       const data = await r.json().catch(() => ({}));
       if (data.locked) {
         if (errEl) errEl.textContent = I18n.t('login.locked');
@@ -2624,7 +2633,7 @@ docker compose up -d --force-recreate</pre>
     if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
     if (body) opts.body = JSON.stringify(body);
     try {
-      const r = await fetch('/dashboard/api' + path, opts);
+      const r = await fetch(_basePath + '/dashboard/api' + path, opts);
       const data = await r.json();
       if (r.status === 401) {
         document.getElementById('login-overlay').classList.remove('hidden');
@@ -2877,7 +2886,7 @@ docker compose up -d --force-recreate</pre>
     const d = await this.api('GET', '/overview');
     // Fetch /health (no auth) in parallel for version/commit info
     try {
-      const h = await fetch('/health').then(r => r.json()).catch(() => null);
+      const h = await fetch(_basePath + '/health').then(r => r.json()).catch(() => null);
       if (h) {
         const sv = document.getElementById('sidebar-ver');
         if (sv) {
@@ -4291,7 +4300,7 @@ docker compose up -d --force-recreate</pre>
     const controller = new AbortController();
     this.sseConn = { close: () => controller.abort() };
 
-    fetch('/dashboard/api/logs/stream', { headers, signal: controller.signal })
+    fetch(_basePath + '/dashboard/api/logs/stream', { headers, signal: controller.signal })
       .then(response => {
         if (!response.ok || !response.body) throw new Error('SSE connection failed');
         const reader = response.body.getReader();
@@ -5572,7 +5581,7 @@ docker compose up -d --force-recreate</pre>
   async fetchContributors() {
     if (this.CONTRIBUTORS_CACHE) return this.CONTRIBUTORS_CACHE;
     try {
-      const res = await fetch('/dashboard/data/contributors.json');
+      const res = await fetch(_basePath + '/dashboard/data/contributors.json');
       if (!res.ok) throw new Error(`status ${res.status}`);
       const data = await res.json();
       this.CONTRIBUTORS_CACHE = Array.isArray(data?.contributors) ? data.contributors : [];
