@@ -613,7 +613,7 @@ export function removeAccount(id) {
  * Returns null when every account is temporarily full — callers should
  * wait a moment and retry (see handlers/chat.js queue loop).
  */
-export function getApiKey(excludeKeys = [], modelKey = null) {
+export function getApiKey(excludeKeys = [], modelKey = null, { optimistic = false } = {}) {
   const now = Date.now();
   const candidates = [];
   for (const a of accounts) {
@@ -624,8 +624,9 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
     if (limit <= 0) continue; // expired tier
     const used = pruneRpmHistory(a, now);
     if (used >= limit) continue;
-    // Tier entitlement + per-account blocklist filter
-    if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
+    // In optimistic mode skip capability filter so accounts without a probe
+    // record are still tried — they may be entitled but just not yet probed.
+    if (!optimistic && modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
     candidates.push({ account: a, used, limit });
   }
   if (candidates.length === 0) return null;
