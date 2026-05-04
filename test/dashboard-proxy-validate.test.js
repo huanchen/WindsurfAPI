@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('dashboard /proxy setter routes — private-host gate (audit H3)', () => {
-  it('PUT /proxy/global with host=127.0.0.1 returns 400 when ALLOW_PRIVATE_PROXY_HOSTS unset', async () => {
+  it('PUT /proxy/global with host=127.0.0.1 is allowed when ALLOW_PRIVATE_PROXY_HOSTS unset', async () => {
     config.apiKey = '';
     config.dashboardPassword = 'admin-pw';
     config.allowPrivateProxyHosts = false;
@@ -52,8 +52,8 @@ describe('dashboard /proxy setter routes — private-host gate (audit H3)', () =
       { type: 'http', host: '127.0.0.1', port: 8080 },
       mkAuthedReq(), res,
     );
-    assert.equal(captured.status, 400, 'private host must be rejected at /proxy/global');
-    assert.ok(/PROXY_PRIVATE/i.test(JSON.stringify(captured.body) || ''), 'error code mentions private-host gate');
+    assert.equal(captured.status, 200, `loopback proxy should be allowed, got ${captured.status}: ${JSON.stringify(captured.body)}`);
+    assert.equal(captured.body.success, true);
   });
 
   it('PUT /proxy/global with host=169.254.169.254 (cloud metadata) returns 400', async () => {
@@ -86,7 +86,7 @@ describe('dashboard /proxy setter routes — private-host gate (audit H3)', () =
     assert.equal(captured.status, 400, 'RFC1918 must be rejected at per-account proxy');
   });
 
-  it('ALLOW_PRIVATE_PROXY_HOSTS=1 disables the gate (operator escape hatch)', async () => {
+  it('ALLOW_PRIVATE_PROXY_HOSTS=1 still allows broader private hosts', async () => {
     config.apiKey = '';
     config.dashboardPassword = 'admin-pw';
     config.allowPrivateProxyHosts = true;
@@ -95,9 +95,10 @@ describe('dashboard /proxy setter routes — private-host gate (audit H3)', () =
     const { res, captured } = mkRes();
     await handleDashboardApi(
       'PUT', '/proxy/global',
-      { type: 'http', host: '127.0.0.1', port: 8080 },
+      { type: 'http', host: '10.0.0.1', port: 8080 },
       mkAuthedReq(), res,
     );
     assert.equal(captured.status, 200, 'opt-in env should let operators set private hosts');
+    assert.equal(captured.body.success, true);
   });
 });

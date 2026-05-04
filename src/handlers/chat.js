@@ -54,7 +54,7 @@ import {
   strictReuseRetryMs, strictReuseMessage,
   recentUserText, repairToolCallArguments,
   rateLimitCooldownMs, genId,
-  neutralizeCascadeIdentity, extractCallerEnvironment,
+  neutralizeCascadeIdentity, IdentityNeutralizeStream, extractCallerEnvironment,
   cachedUsage, applyToolPreambleBudget,
   ttlHintFromCachePolicy, buildUsageBody, waitForAccount,
   mergeReasoningEffortIntoModel,
@@ -71,7 +71,7 @@ export {
   resolveEffectiveModelKey, shouldUseCascadeReuse,
   shouldFallbackThinkingToText, shouldUseStrictCascadeReuse,
   repairToolCallArguments, rateLimitCooldownMs,
-  neutralizeCascadeIdentity, extractCallerEnvironment,
+  neutralizeCascadeIdentity, IdentityNeutralizeStream, extractCallerEnvironment,
   applyToolPreambleBudget, mergeReasoningEffortIntoModel,
 };
 
@@ -535,14 +535,15 @@ export async function handleChatCompletions(body, context = {}) {
   if (cached) {
     log.info(`Chat: cache HIT model=${displayModel} flow=non-stream`);
     recordRequest(displayModel, true, 0, null);
-    const message = { role: 'assistant', content: cached.text || null };
+    const cachedText = neutralizeCascadeIdentity(cached.text || '', displayModel);
+    const message = { role: 'assistant', content: cachedText || null };
     if (cached.thinking) message.reasoning_content = cached.thinking;
     return {
       status: 200,
       body: {
         id: chatId, object: 'chat.completion', created, model: displayModel,
         choices: [{ index: 0, message, finish_reason: 'stop' }],
-        usage: cachedUsage(messages, cached.text),
+        usage: cachedUsage(messages, cachedText),
       },
     };
   }
@@ -1205,6 +1206,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       if (cached) {
         log.info(`Chat: cache HIT model=${model} flow=stream`);
         recordRequest(model, true, 0, null);
+        const cachedText = neutralizeCascadeIdentity(cached.text || '', model);
         try {
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
@@ -1212,14 +1214,14 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: { reasoning_content: cached.thinking }, finish_reason: null }] });
           }
-          if (cached.text) {
+          if (cachedText) {
             send({ id, object: 'chat.completion.chunk', created, model,
-              choices: [{ index: 0, delta: { content: cached.text }, finish_reason: null }] });
+              choices: [{ index: 0, delta: { content: cachedText }, finish_reason: null }] });
           }
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
           send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [], usage: cachedUsage(messages, cached.text) });
+            choices: [], usage: cachedUsage(messages, cachedText) });
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         } finally {
           unregisterSse();
@@ -1290,6 +1292,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // if a path straddles a chunk boundary. See src/sanitize.js.
       let pathStreamText = new PathSanitizeStream();
       let pathStreamThinking = new PathSanitizeStream();
+      let identityStreamText = new IdentityNeutralizeStream(model);
 
       const emitContent = (clean) => {
         if (!clean) return;
@@ -1307,6 +1310,15 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         accThinking += clean;
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { reasoning_content: clean }, finish_reason: null }] });
+      };
+      const emitSanitizedContent = (text) => {
+        const pathClean = pathStreamText.feed(text);
+        const identityClean = identityStreamText.feed(pathClean);
+        emitContent(identityClean);
+      };
+      const flushSanitizedContent = () => {
+        emitContent(identityStreamText.feed(pathStreamText.flush()));
+        emitContent(identityStreamText.flush());
       };
 
       const emitToolCallDelta = (tc, idx) => {
@@ -1341,7 +1353,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (Array.isArray(parsed.items) && parsed.items.length) {
               for (const item of parsed.items) {
                 if (item.type === 'text') {
-                  emitContent(pathStreamText.feed(item.text));
+                  emitSanitizedContent(item.text);
                   continue;
                 }
                 if (emulateTools) {
@@ -1374,7 +1386,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               }
             }
           }
-          if (safeText) emitContent(pathStreamText.feed(safeText));
+          if (safeText) emitSanitizedContent(safeText);
         }
         if (chunk.thinking) {
           emitThinking(pathStreamThinking.feed(chunk.thinking));
@@ -1400,6 +1412,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             pathStreamText = new PathSanitizeStream();
             pathStreamThinking = new PathSanitizeStream();
+            identityStreamText = new IdentityNeutralizeStream(model);
           }
           let acct = null;
           if (reuseEntry && attempt === 0) {
@@ -1524,7 +1537,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             //   3. PathSanitizeStream tail (thinking)
             if (toolParser) {
               const tail = toolParser.flush();
-              if (tail.text) emitContent(pathStreamText.feed(tail.text));
+              if (tail.text) emitSanitizedContent(tail.text);
               // M2 allowlist on the tail flush as well — stream end can
               // still emit tail tool_calls and they need the same filter.
               const filteredTail = emulateTools
@@ -1550,7 +1563,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 log.info(`Chat[stream]: emulateTools=true but parser found 0 tool_calls (model=${modelKey} provider=${provider}); markers=${markers.join(',') || 'none'}; head="${head}"`);
               }
             }
-            emitContent(pathStreamText.flush());
+            flushSanitizedContent();
             emitThinking(pathStreamThinking.flush());
 
             // v2.0.65 native bridge: cascade trajectory steps come back on

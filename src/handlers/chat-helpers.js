@@ -634,11 +634,13 @@ export function neutralizeCascadeIdentity(text, modelName) {
   if (!text || !modelName) return text;
   const provider = MODEL_PROVIDERS[Object.keys(MODEL_PROVIDERS).find(k => modelName.toLowerCase().startsWith(k)) || ''];
   if (!provider) return text;
-  return text
+  let out = text
     // First-person identity claims
     .replace(/\bI am Cascade\b/gi, `I am ${modelName}`)
     .replace(/\bI'm Cascade\b/gi, `I'm ${modelName}`)
     .replace(/\bmy name is Cascade\b/gi, `my name is ${modelName}`)
+    .replace(/我是\s*Cascade\b/gi, `我是 ${modelName}`)
+    .replace(/我(?:叫|的名字是|的名称是)\s*Cascade\b/gi, `我是 ${modelName}`)
     // Third-person self-reference common in Cascade prose
     .replace(/\bCascade, an AI coding assistant\b/gi, `${modelName}, an AI assistant`)
     .replace(/\bCascade is an? (?:AI )?(?:coding )?assistant\b/gi, `${modelName} is an AI assistant`)
@@ -656,6 +658,46 @@ export function neutralizeCascadeIdentity(text, modelName) {
     // "the " is consumed by the same regex so we don't end up with the
     // double-article artefact ("the the workspace").
     .replace(/\b(?:the )?Cascade(?:['’]s)? workspace\b/gi, 'the workspace');
+  const claudeFamily = String(modelName).toLowerCase().match(/^claude[-.](sonnet|opus|haiku)/)?.[1];
+  if (claudeFamily) {
+    const familyTitle = claudeFamily[0].toUpperCase() + claudeFamily.slice(1);
+    const wrongIdentity = new RegExp(
+      `((?:I\\s+am|I'm|I’m|my\\s+model\\s+is|this\\s+model\\s+is|you\\s+are\\s+talking\\s+to|我是|我叫|我的模型是|当前模型是)\\s+(?:Anthropic(?:'s| 的)?\\s*)?)(?:Claude\\s+)?(?:${familyTitle}\\s*4[.-]?5|4[.-]?5\\s*${familyTitle}|claude-${claudeFamily}-4[.-]?5|claude-4\\.5-${claudeFamily})(?:\\s+model)?`,
+      'gi'
+    );
+    out = out
+      .replace(wrongIdentity, `$1${modelName}`)
+      .replace(
+        new RegExp(`([（(]\\s*)(?:claude-${claudeFamily}-4[.-]?5|claude-4\\.5-${claudeFamily}|Claude\\s+${familyTitle}\\s*4[.-]?5)(\\s*[）)])`, 'gi'),
+        `$1${modelName}$2`
+      );
+  }
+  return out;
+}
+
+export class IdentityNeutralizeStream {
+  constructor(modelName, holdChars = 128) {
+    this.modelName = modelName;
+    this.holdChars = Math.max(32, holdChars);
+    this.buf = '';
+  }
+
+  feed(text) {
+    if (!text) return '';
+    this.buf = neutralizeCascadeIdentity(this.buf + text, this.modelName);
+    if (this.buf.length <= this.holdChars) return '';
+    const emitLen = this.buf.length - this.holdChars;
+    const out = this.buf.slice(0, emitLen);
+    this.buf = this.buf.slice(emitLen);
+    return out;
+  }
+
+  flush() {
+    if (!this.buf) return '';
+    const out = neutralizeCascadeIdentity(this.buf, this.modelName);
+    this.buf = '';
+    return out;
+  }
 }
 
 /**

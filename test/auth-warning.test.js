@@ -60,6 +60,17 @@ describe('shouldEmitNoAuthWarning', () => {
     assert.equal(validateApiKey(''), false);
   });
 
+  it('accepts any configured API_KEY when env contains comma-separated keys', () => {
+    config.apiKey = 'server-secret, sk-second ,sk-third';
+    configureBindHost('0.0.0.0');
+
+    assert.equal(validateApiKey('server-secret'), true);
+    assert.equal(validateApiKey('sk-second'), true);
+    assert.equal(validateApiKey('sk-third'), true);
+    assert.equal(validateApiKey('sk-missing'), false);
+    assert.equal(validateApiKey(''), false);
+  });
+
   it('returns masked account keys without the raw upstream apiKey', () => {
     const key = `abcd1234efgh5678-${Date.now()}`;
     const account = addAccountByKey(key, 'masked-list');

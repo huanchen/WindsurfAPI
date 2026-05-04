@@ -1540,9 +1540,13 @@ export function validateApiKey(key) {
       if (typeof v === 'string') effectiveKey = v;
     } catch { /* keep env fallback */ }
   }
-  if (!effectiveKey) return isLocalBindHost(_bindHost);
+  const configuredKeys = String(effectiveKey || '')
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean);
+  if (configuredKeys.length === 0) return isLocalBindHost(_bindHost);
   if (!key) return false;
-  return safeEqualString(key, effectiveKey);
+  return configuredKeys.some(k => safeEqualString(key, k));
 }
 
 // ─── Brute-force lockout (v2.0.56, CLIProxyAPI-style) ─────────────────

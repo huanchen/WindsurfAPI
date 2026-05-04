@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { neutralizeCascadeIdentity } from '../src/handlers/chat.js';
+import { neutralizeCascadeIdentity, IdentityNeutralizeStream } from '../src/handlers/chat.js';
 
 // Cascade's planner system prompt teaches the upstream model to refer to
 // itself as "Cascade", to claim it was "made by Codeium" or "by Windsurf",
@@ -27,6 +27,10 @@ describe('neutralizeCascadeIdentity', () => {
     assert.equal(
       neutralizeCascadeIdentity('Hi! my name is Cascade.', model),
       `Hi! my name is ${model}.`
+    );
+    assert.equal(
+      neutralizeCascadeIdentity('你好，我是 Cascade，基于 Anthropic 的模型。', model),
+      `你好，我是 ${model}，基于 Anthropic 的模型。`
     );
   });
 
@@ -77,6 +81,32 @@ describe('neutralizeCascadeIdentity', () => {
       neutralizeCascadeIdentity('I will use the Cascade workspace.', model),
       'I will use the workspace.'
     );
+  });
+
+  it('rewrites Claude 4.5 self-identification for a requested Claude 4.6 model', () => {
+    assert.equal(
+      neutralizeCascadeIdentity('你好！我是 Claude Sonnet 4.5（claude-sonnet-4-5），由 Anthropic 开发。', 'claude-sonnet-4-6'),
+      '你好！我是 claude-sonnet-4-6（claude-sonnet-4-6），由 Anthropic 开发。'
+    );
+    assert.equal(
+      neutralizeCascadeIdentity("I'm Claude Sonnet 4.5 model.", 'claude-sonnet-4.6'),
+      "I'm claude-sonnet-4.6."
+    );
+  });
+
+  it('does not rewrite unrelated Claude version comparisons', () => {
+    const text = 'Claude Sonnet 4.5 and Claude Sonnet 4.6 have different routing IDs.';
+    assert.equal(neutralizeCascadeIdentity(text, 'claude-sonnet-4-6'), text);
+  });
+
+  it('rewrites identity text split across streaming chunks', () => {
+    const stream = new IdentityNeutralizeStream('claude-sonnet-4-6', 48);
+    const out = [
+      stream.feed('你好！我是 Claude Son'),
+      stream.feed('net 4.5（claude-sonnet-4-5），由 Anthropic 开发。后续内容继续输出。'),
+      stream.flush(),
+    ].join('');
+    assert.equal(out, '你好！我是 claude-sonnet-4-6（claude-sonnet-4-6），由 Anthropic 开发。后续内容继续输出。');
   });
 
   it('leaves unrelated text unchanged', () => {

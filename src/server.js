@@ -12,7 +12,7 @@
  */
 
 import http from 'http';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -70,11 +70,12 @@ function readBody(req) {
 
 export function extractToken(req) {
   // Anthropic SDK + OAI SDK compatibility: accept either header.
+  const xApiKey = String(req.headers['x-api-key'] || '').trim();
+  if (xApiKey && !xApiKey.includes(',')) return xApiKey;
   const authHeader = String(req.headers['authorization'] || '').trim();
   if (authHeader && authHeader.includes(',')) return '';
   const m = authHeader.match(/^Bearer\s+(.+)$/i);
   if (m) return m[1].trim();
-  const xApiKey = req.headers['x-api-key'] || '';
   return xApiKey;
 }
 
@@ -84,7 +85,7 @@ function json(res, status, body) {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
     // Per-request dynamic responses must not be cached by intermediaries.
     // Some upstream aggregators (e.g. sub2api, #97) priority-cache responses
     // when they don't see an explicit Cache-Control directive and serve
@@ -92,6 +93,26 @@ function json(res, status, body) {
     'Cache-Control': 'no-store',
   });
   res.end(data);
+}
+
+function tokenFingerprint(token) {
+  if (!token) return 'missing';
+  return 'sha256:' + createHash('sha256').update(String(token), 'utf8').digest('hex').slice(0, 10);
+}
+
+function tokenSummary(token) {
+  if (!token) return 'missing';
+  const s = String(token);
+  const head = s.slice(0, Math.min(8, s.length));
+  const tail = s.length > 12 ? s.slice(-4) : '';
+  return `${tokenFingerprint(s)} len=${s.length} value=${head}${tail ? `...${tail}` : '...'}`;
+}
+
+function clientSummary(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = forwarded || req.socket?.remoteAddress || 'unknown';
+  const ua = String(req.headers['user-agent'] || '').replace(/\s+/g, ' ').slice(0, 96) || 'unknown';
+  return `ip=${ip} ua="${ua}"`;
 }
 
 async function route(req, res) {
@@ -213,15 +234,17 @@ async function route(req, res) {
 
   // ─── API endpoints (require API key) ────────────────────
 
-  if (!validateApiKey(extractToken(req))) {
+  const apiToken = extractToken(req);
+  if (!validateApiKey(apiToken)) {
     // v2.0.61 (#110): clearer error so operators know the issue is
     // configuration (no API_KEY set on a public-bind instance) rather
     // than a bad client header. The chat client side rarely shows a
     // verbose error so we cram the diagnosis into the message itself.
-    const tokenSent = !!extractToken(req);
+    const tokenSent = !!apiToken;
     const message = tokenSent
       ? 'Invalid API key. Either the key is wrong, or the server has API_KEY configured to a different value than the one your client sent.'
       : 'Missing API key. This server runs in fail-closed mode: requests must include `Authorization: Bearer <key>` (or `x-api-key: <key>`) matching the configured API_KEY env var. If you intend to run open (no auth), bind the server to localhost (HOST=127.0.0.1).';
+    log.warn(`API auth failed: ${method} ${path} token=${tokenSummary(apiToken)} ${clientSummary(req)}`);
     return json(res, 401, { error: { message, type: 'auth_error' } });
   }
 
@@ -320,7 +343,7 @@ async function route(req, res) {
 
     const reqStartedAt = Date.now();
     const traceId = generateTraceId();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body), traceId });
+    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, apiToken, body), traceId });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -364,7 +387,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body) } });
+    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, apiToken, body) } });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -399,7 +422,7 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
-    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, apiToken, body) });
     const anthropicHeaders = {
       'request-id': 'req-' + randomUUID(),
       'x-trace-id': generateTraceId(),
@@ -415,6 +438,7 @@ async function route(req, res) {
     return;
   }
 
+  log.warn(`API route not found: ${method} ${path} token=${tokenSummary(apiToken)} ${clientSummary(req)}`);
   json(res, 404, { error: { message: `${method} ${path} not found`, type: 'not_found' } });
 }
 

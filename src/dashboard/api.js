@@ -43,6 +43,8 @@ import {
   _runOneTick as runQuietWindowTickNow,
 } from './quiet-window-updater.js';
 
+const RUNNING_UNDER_NODE_TEST = !!process.env.NODE_TEST_CONTEXT || process.env.NODE_ENV === 'test';
+
 export function parseProxyUrl(proxy) {
   const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
   if (!proxyParts) return null;
@@ -53,6 +55,19 @@ export function parseProxyUrl(proxy) {
     username: proxyParts[2] || '',
     password: proxyParts[3] || '',
   };
+}
+
+function isLoopbackProxyHost(host) {
+  const normalized = String(host || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost' || isLoopbackAddress(normalized);
+}
+
+async function validateProxyHost(host) {
+  if (config.allowPrivateProxyHosts || isLoopbackProxyHost(host)) {
+    await validateHostFormat(host);
+  } else {
+    await assertPublicUrlHost(host);
+  }
 }
 
 export function buildBatchProxyBinding(result, proxy) {
@@ -75,6 +90,10 @@ function json(res, status, body) {
     'Access-Control-Allow-Headers': 'Content-Type, X-Dashboard-Password',
   });
   res.end(data);
+}
+
+function shouldSkipBackgroundWork() {
+  return RUNNING_UNDER_NODE_TEST;
 }
 
 // v2.0.56: client IP extraction. Mirrors caller-key.js TRUST_PROXY_XFF
@@ -141,9 +160,11 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
     // Persist the per-account proxy we used for login so chat requests
     // also egress through the same IP, then warm up a matching LS.
     if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
-    ensureLsForAccount(account.id)
-      .then(() => probeAccount(account.id))
-      .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    if (!shouldSkipBackgroundWork()) {
+      ensureLsForAccount(account.id)
+        .then(() => probeAccount(account.id))
+        .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    }
   }
 
   return {
@@ -435,11 +456,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           return json(res, 400, { error: 'ERR_PROXY_FORMAT_INVALID' });
         }
         try {
-          if (config.allowPrivateProxyHosts) {
-            await validateHostFormat(parsedProxy.host);
-          } else {
-            await assertPublicUrlHost(parsedProxy.host);
-          }
+          await validateProxyHost(parsedProxy.host);
         } catch (e) {
           return json(res, 400, { error: e.message || 'ERR_PROXY_INVALID' });
         }
@@ -451,11 +468,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       if (parsedProxy) {
         setAccountProxy(account.id, parsedProxy);
-        ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        if (!shouldSkipBackgroundWork()) {
+          ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        }
       }
 
       // Fire-and-forget probe so the UI gets tier info shortly after add
-      probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+      if (!shouldSkipBackgroundWork()) {
+        probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+      }
       return json(res, 200, {
         success: true,
         account: { id: account.id, email: account.email, method: account.method, status: account.status },
@@ -860,8 +881,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // any internal socket, then upstream egress flows through it. Skip
     // when the operator explicitly allows private hosts or when the
     // body has no host (clearing the global proxy via empty PUT).
-    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
-      try { await assertPublicUrlHost(body.host); }
+    if (body && typeof body === 'object' && body.host) {
+      try { await validateProxyHost(body.host); }
       catch (e) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
@@ -880,15 +901,17 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // Same H3 gate as /proxy/global PUT — per-account proxies were the
     // other half of the bypass. Empty body / no host = clearing the
     // proxy, leave it unvalidated.
-    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
-      try { await assertPublicUrlHost(body.host); }
+    if (body && typeof body === 'object' && body.host) {
+      try { await validateProxyHost(body.host); }
       catch (e) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
     }
     setAccountProxy(proxyAccount[1], body);
     // Spawn (or adopt) the LS instance for this proxy so chat routes immediately
-    ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+    if (!shouldSkipBackgroundWork()) {
+      ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+    }
     return json(res, 200, { success: true });
   }
   if (proxyAccount && method === 'DELETE') {
@@ -1219,7 +1242,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
               result.proxy = proxy;
-              ensureLsForAccount(binding.accountId).catch(() => {});
+              if (!shouldSkipBackgroundWork()) {
+                ensureLsForAccount(binding.accountId).catch(() => {});
+              }
           }
           results.push(result);
         } catch (err) {
@@ -1249,9 +1274,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         if (refreshToken) {
           setAccountTokens(account.id, { refreshToken, idToken });
         }
-        ensureLsForAccount(account.id)
-          .then(() => probeAccount(account.id))
-          .catch(e => log.warn(`OAuth auto-probe failed: ${e.message}`));
+        if (!shouldSkipBackgroundWork()) {
+          ensureLsForAccount(account.id)
+            .then(() => probeAccount(account.id))
+            .catch(e => log.warn(`OAuth auto-probe failed: ${e.message}`));
+        }
       }
 
       return json(res, 200, {
@@ -1393,11 +1420,7 @@ async function gitStatus() {
 }
 
 async function testProxy({ host, port, username, password, type }) {
-  if (config.allowPrivateProxyHosts) {
-    await validateHostFormat(host);
-  } else {
-    await assertPublicUrlHost(host);
-  }
+  await validateProxyHost(host);
   const { isSocks, createSocksTunnel } = await import('../socks.js');
   const tls = await import('node:tls');
   const targetHost = 'api.ipify.org';

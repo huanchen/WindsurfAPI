@@ -84,6 +84,42 @@ describe('POST /accounts proxy ordering (regression for PR #90 follow-up)', () =
     assert.deepEqual(after, before, 'no account should be created when private proxy is rejected');
   });
 
+  it('creates account when proxy host is loopback and ALLOW_PRIVATE_PROXY_HOSTS is off', async () => {
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    config.allowPrivateProxyHosts = false;
+    configureBindHost('127.0.0.1');
+
+    const before = snapshotAccountIds();
+    const label = `test-proxy-ordering-loopback-${Date.now()}`;
+    const key = `test-key-loopback-${Date.now()}`;
+    const proxy = 'http://127.0.0.1:8080';
+    const res = fakeRes();
+    await handleDashboardApi(
+      'POST',
+      '/accounts',
+      { api_key: key, label, proxy },
+      { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
+      res
+    );
+    const after = snapshotAccountIds();
+
+    const body = res.json();
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    assert.equal(body.success, true);
+    assert.equal(after.length, before.length + 1, 'should create exactly one account');
+    const accountId = body.account.id;
+    createdAccountIds.add(accountId);
+    const proxyCfg = getEffectiveProxy(accountId);
+    assert.deepEqual(proxyCfg, {
+      type: 'http',
+      host: '127.0.0.1',
+      port: 8080,
+      username: '',
+      password: '',
+    });
+  });
+
   it('creates account with valid public proxy and binds account-level proxy', async () => {
     config.dashboardPassword = '';
     config.apiKey = '';

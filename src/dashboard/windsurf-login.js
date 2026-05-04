@@ -25,6 +25,7 @@ const WINDSURF_CHECK_LOGIN_METHOD_URL = 'https://windsurf.com/_backend/exa.seat_
 const WINDSURF_SEAT_SERVICE_BASE = 'https://server.self-serve.windsurf.com/exa.seat_management_pb.SeatManagementService';
 const WINDSURF_POST_AUTH_URL = `${WINDSURF_SEAT_SERVICE_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetOneTimeAuthToken`;
+const WINDSURF_PRIMARY_API_KEY_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetPrimaryApiKeyForDevsOnly`;
 // v2.0.57 (Fix 2): Windsurf migrated PostAuth into the website _backend
 // path. Wam-bundle and the official 2.0.67 IDE talk to the new host;
 // keep the old self-serve endpoint as fallback so a regional outage on
@@ -33,14 +34,23 @@ const WINDSURF_ONE_TIME_TOKEN_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetOneTimeAut
 const WINDSURF_BACKEND_SEAT_BASE = 'https://windsurf.com/_backend/exa.seat_management_pb.SeatManagementService';
 const WINDSURF_POST_AUTH_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetOneTimeAuthToken`;
+const WINDSURF_PRIMARY_API_KEY_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetPrimaryApiKeyForDevsOnly`;
 
-async function postAuthDualPath(body, fingerprint, proxy) {
+async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null) {
   // Try the new windsurf.com/_backend host first; on 5xx / network error
   // retry against the legacy server.self-serve.windsurf.com host. Both
   // accept the same Connect-RPC body shape.
+  //
+  // v2.0.75 (#114 CharwinYAO follow-up): added preferredHost so the
+  // caller can force the OPPOSITE host on a cross-host invalid-token
+  // retry — see the OneTimeToken cross-host fallback in
+  // windsurfLoginViaPasswordAuth1.
   const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  const orderedHosts = preferredHost === 'legacy'
+    ? [[WINDSURF_POST_AUTH_URL, 'legacy'], [WINDSURF_POST_AUTH_URL_NEW, 'new']]
+    : [[WINDSURF_POST_AUTH_URL_NEW, 'new'], [WINDSURF_POST_AUTH_URL, 'legacy']];
   let lastErr;
-  for (const [url, label] of [[WINDSURF_POST_AUTH_URL_NEW, 'new'], [WINDSURF_POST_AUTH_URL, 'legacy']]) {
+  for (const [url, label] of orderedHosts) {
     try {
       const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
       // 4xx is an actual auth failure (bad token, etc) — don't fall through.
@@ -68,32 +78,76 @@ async function oneTimeTokenDualPath(body, fingerprint, proxy, preferredHost = nu
     ? [[WINDSURF_ONE_TIME_TOKEN_URL, 'legacy'], [WINDSURF_ONE_TIME_TOKEN_URL_NEW, 'new']]
     : [[WINDSURF_ONE_TIME_TOKEN_URL_NEW, 'new'], [WINDSURF_ONE_TIME_TOKEN_URL, 'legacy']];
   let lastErr;
+  let firstRes = null;
+  let firstLabel = null;
   for (const [url, label] of orderedHosts) {
     try {
       const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
-      // 4xx response from the preferred host is meaningful — don't
-      // bother trying the other host if the token is genuinely
-      // invalid. We only fall through on 5xx / network errors.
-      if (res.status >= 400 && res.status < 500 && label === orderedHosts[0][1]) {
-        // Persist preferred-host 4xx so caller can surface a useful error
-        // instead of secretly trying the other host (which would yield
-        // a different but equally unhelpful error).
-        return { res, label };
-      }
-      if (res.status >= 400 && res.status < 500) {
-        // Cross-host 4xx — keep looping just in case but record the err.
-        lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
-        continue;
-      }
       if (res.status >= 200 && res.status < 300 && res.data?.authToken) {
         return { res, label };
+      }
+      // v2.0.61: 4xx from the preferred host is meaningful — used to
+      // return immediately so caller saw the real auth error.
+      //
+      // v2.0.79 (audit M-3): widened to keep trying the other host
+      // ONLY when the preferred host returned an "invalid token"
+      // 401 — that signal is exactly the cross-host symmetry failure
+      // we want to fall through. Other 4xx codes (400 bad request,
+      // 403 forbidden, 410 gone) still short-circuit because they're
+      // genuine permanent errors and trying the other host won't help.
+      if (res.status >= 400 && res.status < 500) {
+        const blob = JSON.stringify(res.data || '').toLowerCase();
+        const isInvalidToken = res.status === 401 && /invalid\s*token|unauthenticated/i.test(blob);
+        if (label === orderedHosts[0][1] && !isInvalidToken) {
+          return { res, label };
+        }
+        // Either non-preferred 4xx OR preferred-but-invalid-token: keep
+        // the response around in case the other host also fails — we
+        // surface the FIRST 4xx (preferred host) so the caller sees the
+        // primary auth error not whatever the fallback produced.
+        if (firstRes === null) {
+          firstRes = res;
+          firstLabel = label;
+        }
+        lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
+        continue;
       }
       lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
     } catch (e) {
       lastErr = new Error(`OneTimeToken ${label}: ${e.message}`);
     }
   }
+  // Both hosts failed — return the preferred-host 4xx if we have one
+  // (more useful to the caller than the fallback's error).
+  if (firstRes) return { res: firstRes, label: firstLabel };
   throw lastErr || new Error('OneTimeToken: both endpoints failed');
+}
+
+async function primaryApiKeyDualPath(sessionToken, fingerprint, proxy, preferredHost = null) {
+  const orderedHosts = preferredHost === 'legacy'
+    ? [[WINDSURF_PRIMARY_API_KEY_URL, 'legacy'], [WINDSURF_PRIMARY_API_KEY_URL_NEW, 'new']]
+    : [[WINDSURF_PRIMARY_API_KEY_URL_NEW, 'new'], [WINDSURF_PRIMARY_API_KEY_URL, 'legacy']];
+  const bodyVariants = [
+    ['sessionToken', JSON.stringify({ sessionToken })],
+    ['session_token', JSON.stringify({ session_token: sessionToken })],
+  ];
+  let lastErr;
+  for (const [url, label] of orderedHosts) {
+    for (const [field, body] of bodyVariants) {
+      try {
+        const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+        const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
+        const apiKey = res.data?.apiKey || res.data?.api_key;
+        if (res.status >= 200 && res.status < 300 && apiKey) {
+          return { apiKey, label, field, data: res.data };
+        }
+        lastErr = new Error(`PrimaryApiKey ${label}/${field} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
+      } catch (e) {
+        lastErr = new Error(`PrimaryApiKey ${label}/${field}: ${e.message}`);
+      }
+    }
+  }
+  throw lastErr || new Error('PrimaryApiKey: both endpoints failed');
 }
 
 // ─── Fingerprint randomization ────────────────────────────
@@ -427,31 +481,84 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
 
   log.info(`Auth1 login OK: ${email}`);
 
-  const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
-  // v2.0.57 (Fix 2): dual-path PostAuth — new host first, legacy fallback.
-  const { res: bridgeRes, label: bridgeLabel } = await postAuthDualPath(bridgeBody, fingerprint, proxy);
-
-  if (bridgeRes.status >= 400 || !bridgeRes.data?.sessionToken) {
-    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(bridgeRes.data).slice(0, 200)}`);
-  }
-
-  const sessionToken = bridgeRes.data.sessionToken;
-  log.info(`Windsurf PostAuth OK (${bridgeLabel}): ${email} account=${bridgeRes.data.accountId || 'unknown'}`);
-
-  const ottBody = JSON.stringify({ authToken: sessionToken });
   // v2.0.61 (#114): pin OneTimeAuthToken to the SAME host PostAuth just
-  // used. Cross-host token replay was failing with "invalid token (error
-  // ID ...)" because session tokens aren't fully symmetric across new
-  // (windsurf.com/_backend) and legacy (server.self-serve.windsurf.com)
-  // gateways yet during this half-migration window.
-  const { res: ottRes, label: ottLabel } = await oneTimeTokenDualPath(ottBody, fingerprint, proxy, bridgeLabel);
+  // used. Cross-host token replay was failing with "invalid token".
+  //
+  // v2.0.75 (#114 CharwinYAO): one host can also become asymmetric
+  // and reject the same-host token (CharwinYAO's v2.0.71 log:
+  // `OneTimeToken legacy HTTP 401: invalid token` after PostAuth
+  // legacy succeeded). Add a cross-host retry: if the first
+  // PostAuth → OneTimeToken pair gets 401 invalid_token at the OTT
+  // step, redo PostAuth on the OPPOSITE host and try again. Treats
+  // the regression as "this gateway is sick right now, switch to
+  // the other one" rather than failing hard.
+  const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
 
-  if (ottRes.status >= 400 || !ottRes.data?.authToken) {
-    throw new Error(`ERR_TOKEN_FETCH_FAILED:${JSON.stringify(ottRes.data).slice(0, 200)}`);
+  async function postAuthThenOtt(forcedHost) {
+    const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy, forcedHost);
+    if (br.status >= 400 || !br.data?.sessionToken) return { stage: 'postauth', br, bl };
+    const sToken = br.data.sessionToken;
+    log.info(`Windsurf PostAuth OK (${bl}): ${email} account=${br.data.accountId || 'unknown'}`);
+    const oBody = JSON.stringify({ authToken: sToken });
+    const { res: oRes, label: oL } = await oneTimeTokenDualPath(oBody, fingerprint, proxy, bl);
+    if (oRes.status >= 400 || !oRes.data?.authToken) return { stage: 'ott', br, bl, oRes, oL, sToken };
+    if (oL === 'legacy') log.info(`OneTimeToken used legacy host: ${email}`);
+    return { stage: 'ok', br, bl, oRes, oL, sToken };
   }
-  if (ottLabel === 'legacy') log.info(`OneTimeToken used legacy host: ${email}`);
 
-  const reg = await registerWithCodeium(ottRes.data.authToken, fingerprint, proxy);
+  function isInvalidTokenError(res) {
+    if (!res || res.status !== 401) return false;
+    const blob = JSON.stringify(res.data || '').toLowerCase();
+    return /invalid\s*token|unauthenticated/i.test(blob);
+  }
+
+  let attempt = await postAuthThenOtt(null);
+  if (attempt.stage === 'ott' && isInvalidTokenError(attempt.oRes)) {
+    const opposite = attempt.bl === 'new' ? 'legacy' : 'new';
+    log.warn(`OneTimeToken ${attempt.oL} returned invalid_token on ${attempt.bl}-bridge sessionToken — retrying with PostAuth on ${opposite} host`);
+    const retry = await postAuthThenOtt(opposite);
+    if (retry.stage === 'ok') {
+      attempt = retry;
+      log.info(`OneTimeToken cross-host retry succeeded: PostAuth=${retry.bl} OTT=${retry.oL}`);
+    } else if (retry.stage === 'ott') {
+      // Both hosts rejected — surface the most informative error.
+      attempt = retry;
+    }
+    // postauth_failed on the retry → keep the original attempt's
+    // ott_failed error (more useful than "the second host's PostAuth
+    // also rejected your auth1Token", which it always will if the
+    // first host already accepted it).
+  }
+
+  if (attempt.stage === 'postauth') {
+    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(attempt.br.data).slice(0, 200)}`);
+  }
+  if (attempt.stage === 'ott') {
+    try {
+      const primary = await primaryApiKeyDualPath(attempt.sToken, fingerprint, proxy, attempt.bl);
+      log.warn(`PrimaryApiKey fallback succeeded (${primary.label}/${primary.field}) after OTT invalid_token: ${email}`);
+      return {
+        // `GetPrimaryApiKeyForDevsOnly` currently returns a `devin-sy...`
+        // key that can be used to prove ownership, but the LS/cloud status
+        // path rejects it for normal model traffic. The freshly minted
+        // `devin-session...` token is what official clients put into
+        // metadata.api_key after this Auth1 bridge flow, and it is the value
+        // that returns Trial/Pro status from GetUserStatus.
+        apiKey: attempt.sToken,
+        name: email,
+        email,
+        apiServerUrl: '',
+        sessionToken: attempt.sToken,
+        primaryApiKey: primary.apiKey,
+        auth1Token,
+      };
+    } catch (e) {
+      log.warn(`PrimaryApiKey fallback failed: ${e.message}`);
+    }
+    throw new Error(`ERR_TOKEN_FETCH_FAILED:${JSON.stringify(attempt.oRes.data).slice(0, 200)}`);
+  }
+
+  const reg = await registerWithCodeium(attempt.oRes.data.authToken, fingerprint, proxy);
   log.info(`Codeium register via Auth1 OK: ${email} → key=${reg.api_key.slice(0, 20)}...`);
 
   return {
@@ -459,7 +566,7 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
     name: reg.name || email,
     email,
     apiServerUrl: reg.api_server_url || '',
-    sessionToken,
+    sessionToken: attempt.sToken,
     auth1Token,
   };
 }
